@@ -10,13 +10,13 @@ import { WorldMap } from '../src/world/mapformat.js';
 import { makeResolvers, isWater } from '../src/world/tileset.js';
 import { neighbors, distance } from '../src/world/hexgrid.js';
 import { createState } from '../src/game/state.js';
-import { addXp, levelOf } from '../src/game/skills.js';
+import { addXp, levelOf, xpToNext } from '../src/game/skills.js';
 import { RECIPES } from '../data/game_data.js';
 import {
-  HIDDEN, resourcesAt, harvestsHere, exploreHex, isExplored, isKnown, scenicOf,
-  ensureMind, TIERS, factsOf, TRADE_REVEAL_RADIUS,
+  HIDDEN, resourcesAt, harvestsHere, exploreHex, meditateHex, isExplored, isKnown, isMeditated,
+  scenicOf, ensureMind, TIERS, factsOf, exploreRadius, MEDITATION_SECONDS, TRADE_REVEAL_RADIUS,
 } from '../src/game/discovery.js';
-import { onStep, onExplored, onTrade, ACHIEVEMENTS, VILLAGE_XP, FIRST_TRADE_XP } from '../src/game/mind.js';
+import { onStep, onExplored, onMeditated, onTrade, ACHIEVEMENTS, VILLAGE_XP, FIRST_TRADE_XP } from '../src/game/mind.js';
 import { Explorer, phaseAt } from '../src/game/explorer.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,7 +36,7 @@ function ground(terrain = 'grass', h = 0, w = 7, d = 7, seed = 'test') {
 const mindXp = s => {
   // Total xp ever earned in mind, across the levels it has rolled through.
   let total = s.skills.mind.xp;
-  for (let l = 1; l < s.skills.mind.level; l++) total += l * l * 10;
+  for (let l = 1; l < s.skills.mind.level; l++) total += xpToNext(l, 'mind');
   return total;
 };
 
@@ -60,7 +60,7 @@ test('only some of the right ground has each resource', () => {
   const open = [...map].filter(c => ['meadow', 'grass'].includes(c.terrain));
   const berries = open.filter(c => resourcesAt(map, c).includes('forage')).length;
   const share = berries / open.length;
-  ok(share > 0.45 && share < 0.75, `berries on ${(share * 100).toFixed(0)}% of open ground`);
+  ok(share > 0.06 && share < 0.25, `berries on ${(share * 100).toFixed(0)}% of open ground`);
 });
 
 test('a hidden harvest is not offered until the hex is explored, and never where there is none', () => {
@@ -92,7 +92,7 @@ test('a village trade reveals the land around it, once', () => {
   for (const c of first.revealed) {
     ok(distance(c.q, c.r, village.q, village.r) <= TRADE_REVEAL_RADIUS, 'revealed too far away');
     ok(isKnown(state, c.q, c.r), 'revealed but not known');
-    ok(!isExplored(state, c.q, c.r), 'a trade should not count as exploring — the scenery is still yours to find');
+    ok(isExplored(state, c.q, c.r), 'village-revealed hexes are already explored');
   }
   eq(mindXp(state) - before, FIRST_TRADE_XP, 'first trade xp');
 
@@ -126,7 +126,7 @@ test('the summit is always gold, and every scenic place has a name', () => {
   }
 });
 
-test('exploring a hex marks it and pays its tier once', () => {
+test('exploring a scenic hex marks it, and sitting to meditate pays its tier once', () => {
   const map = worlds[2];
   const world = worldOf(map);
   const spot = [...map].find(c => scenicOf(map, c).tier === 2);
@@ -137,12 +137,63 @@ test('exploring a hex marks it and pays its tier once', () => {
   const first = onExplored(world, state, spot);
   eq(first.found.tier, 2, 'tier');
   ok(first.moments.some(m => m.kind === 'scenic' && m.tier === 2), 'no scenic moment');
-  ok(mindXp(state) - before >= TIERS[2].xp, 'silver xp not paid');
   ok(isExplored(state, spot.q, spot.r) && isKnown(state, spot.q, spot.r), 'not marked');
+  ok(!isMeditated(state, spot.q, spot.r), 'meditated before sitting');
+
+  const med = onMeditated(world, state, spot);
+  eq(med.meditated.tier, 2, 'meditation tier');
+  ok(mindXp(state) - before >= TIERS[2].meditateXp, 'silver meditation xp not paid');
+  ok(isMeditated(state, spot.q, spot.r), 'meditation not recorded');
 
   const again = onExplored(world, state, spot);
   eq(again.found, null, 'explored twice');
-  eq(again.moments.length, 0, 'paid twice');
+  eq(again.moments.length, 0, 'explored paid twice');
+
+  const medAgain = onMeditated(world, state, spot);
+  eq(medAgain.meditated, null, 'meditated twice');
+  eq(medAgain.moments.length, 0, 'meditation paid twice');
+});
+
+test('higher ground reveals lower countryside without looking up mountains or past taller peaks', () => {
+  const map = ground('grass', 0, 13, 13);
+  map.place(6, 6, 'stony', 12);
+  map.place(5, 6, 'stony', 12); // same height
+  map.place(6, 5, 'stony', 15); // taller ridge to the north
+  map.place(7, 5, 'stony', 10); // only 2 levels lower (walkable slope, not a cliff view)
+  const state = createState();
+  ok(exploreRadius(map, map.get(1, 1)) === 0, 'low flat ground has 0 radius');
+  ok(exploreRadius(map, map.get(6, 6)) >= 3, 'high peak sees at least 3 hexes out');
+  const res = exploreHex(map, state, 6, 6);
+  ok(res.revealed.length > 10, 'high peak reveals surrounding countryside');
+  ok(isKnown(state, 8, 6), 'lower ground should become known');
+  ok(!isKnown(state, 5, 6), 'same-height ground should not be revealed as lower vista');
+  ok(!isKnown(state, 7, 5), 'gentle slope (< 3 drop) should not be revealed as vista');
+  ok(!isKnown(state, 6, 5), 'taller mountain ground should not be revealed from below');
+  ok(!isKnown(state, 6, 4), 'ground behind a taller peak should stay hidden');
+
+  for (const n of neighbors(1, 2)) map.place(n.q, n.r, 'stony', 5);
+  map.place(1, 2, 'stony', 7);
+  map.place(1, 3, 'stony', 14);
+  ok(exploreRadius(map, map.get(1, 2)) === 0, 'foothill under a cliff with no 3-level drop sees nothing');
+
+  const lowN = neighbors(1, 2).find(n => n.r !== 3);
+  map.place(lowN.q, lowN.r, 'grass', 4); // now (1, 2) is 3 levels higher than lowN
+  ok(exploreRadius(map, map.get(1, 2)) >= 2, 'ledge 3+ levels above an adjacent hex sees over it');
+  exploreHex(map, state, 1, 2);
+  ok(isKnown(state, lowN.q, lowN.r), 'adjacent hex 3 levels lower is revealed');
+
+  const dropMap = ground('grass', 0, 11, 11, 'drops');
+  dropMap.place(5, 5, 'stony', 16); // summit
+  dropMap.place(2, 2, 'stony', 3);
+  dropMap.place(2, 8, 'stony', 8);
+  dropMap.place(8, 2, 'stony', 12);
+  eq(exploreRadius(dropMap, dropMap.get(2, 2)), 2, '3-level drop sees radius 2');
+  eq(exploreRadius(dropMap, dropMap.get(2, 8)), 4, '8-level drop sees radius 4');
+  eq(exploreRadius(dropMap, dropMap.get(8, 2)), 6, '12-level drop sees radius 6');
+  eq(exploreRadius(dropMap, dropMap.get(5, 5)), 7, 'summit sees radius 7');
+  const dState = createState();
+  exploreHex(dropMap, dState, 2, 2);
+  ok(isKnown(dState, 2, 3), 'standing 3 levels above an adjacent lowland tile reveals it');
 });
 
 test('ordinary ground pays nothing itself, but adds up to a milestone', () => {
@@ -179,7 +230,7 @@ test('ore traces only show up once Lore has taught you what to look for', () => 
 
 // ---------------------------------------------------------------- the clock
 
-test('standing still explores a hex, and better places take longer', () => {
+test('standing still explores any hex in flat time, and meditating on scenic places takes longer', () => {
   const map = worlds[0];
   const plain = [...map].find(c => !isWater(c.terrain) && !scenicOf(map, c).tier);
   const gold = factsOf(map).summit;
@@ -194,6 +245,15 @@ test('standing still explores a hex, and better places take longer', () => {
   const b = timeTo(gold);
   ok(Math.abs(a - TIERS[0].seconds) < 0.15, `plain took ${a}s`);
   ok(Math.abs(b - TIERS[3].seconds) < 0.15, `gold took ${b}s`);
+
+  const state = createState();
+  exploreHex(map, state, gold.q, gold.r);
+  const ex = new Explorer(map, state);
+  ok(ex.startMeditation(gold.q, gold.r), 'should start meditation on explored scenic hex');
+  const seated = { q: gold.q, r: gold.r, moving: false, seated: true };
+  let medDone = null;
+  for (let t = 0; t < 10 && !medDone; t += 0.1) medDone = ex.updateMeditation(0.1, seated, true);
+  ok(medDone && medDone.tier === 3, 'meditation should finish on scenic hex while seated');
 });
 
 test('moving or being busy resets the clock', () => {
@@ -210,12 +270,10 @@ test('moving or being busy resets the clock', () => {
   eq(ex.charge, null, 'getting busy did not reset');
 });
 
-test('the ticker runs one circuit per tier', () => {
+test('the ticker runs smoothly around the hex', () => {
   eq(phaseAt(0).phase, 0, 'starts pale');
-  eq(phaseAt(TIERS[0].seconds - 0.01).phase, 0, 'still pale');
-  eq(phaseAt(TIERS[0].seconds + 0.01).phase, 1, 'then copper');
-  eq(phaseAt(TIERS[2].seconds + 0.01).phase, 3, 'gold last');
-  ok(phaseAt(TIERS[1].seconds - 0.01).frac > 0.95, 'a circuit should nearly close before the next starts');
+  ok(phaseAt(TIERS[0].seconds - 0.01).frac > 0.95, 'a circuit should nearly close before finishing');
+  eq(phaseAt(TIERS[0].seconds + 0.1).frac, 1, 'clamps at 1');
 });
 
 // ------------------------------------------------------------ travel and xp

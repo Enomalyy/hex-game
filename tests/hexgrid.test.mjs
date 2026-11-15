@@ -176,6 +176,11 @@ test('picking finds a summit drawn far above its own ground line', () => {
   const hit = pickHex(top.cx, top.cy, topHeight, 3, 20);
   eq({ q: hit.q, r: hit.r }, { q: 0, r: 0 }, 'told how tall the map is, the summit should win');
 
+  // A hex standing right behind the mountain's cliff wall is occluded by the peak's body.
+  const behindWall = tileCenter(0, -4, 1);
+  const bodyHit = pickHex(behindWall.cx, behindWall.cy, topHeight, 3, 20);
+  eq({ q: bodyHit.q, r: bodyHit.r }, { q: 0, r: 0 }, 'the mountain body in front hides the hex behind it');
+
   // And it must not start finding mountains that are not there.
   const clear = tileCenter(0, -9, 1);
   const behind = pickHex(clear.cx, clear.cy, topHeight, 3, 20);

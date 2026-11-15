@@ -18,8 +18,9 @@ import { addItem, countItem } from '../src/game/inventory.js';
 import { addXp } from '../src/game/skills.js';
 import { availableHarvests, harvestSpec, cliffTarget, nearbyOre } from '../src/game/harvests.js';
 import { determineContext, villageNear } from '../src/game/context.js';
-import { resourcesAt, exploreHex } from '../src/game/discovery.js';
-import { harvest, prospect, build, placementSpots, growCrops, PROSPECT_RADIUS, FIELD_RIPENS_IN } from '../src/game/actions.js';
+import { harvest, shakeTree, prospect, build, relightCampfire, placementSpots, growCrops, PROSPECT_RADIUS, FIELD_RIPENS_IN } from '../src/game/actions.js';
+import { resourcesAt, exploreHex, harvestsHere } from '../src/game/discovery.js';
+import { nodesAt, rocksOn, takeNode } from '../src/game/nodes.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const index = JSON.parse(readFileSync(join(root, 'new_tiles', 'index.json'), 'utf8'));
@@ -39,6 +40,7 @@ function ground(terrain = 'grass', h = 0, w = 7, d = 7) {
 function ready() {
   const s = createState({ gold: 500 });
   addItem(s, 'meal', 12);
+  addItem(s, 'stone_knife', 1);
   for (const skill of ['woodworking', 'stoneworking', 'homesteading', 'metalworking', 'mind']) {
     addXp(s, skill, 5000);
   }
@@ -55,6 +57,7 @@ test('harvests are offered by terrain, not everywhere', () => {
 
   const grass = ground('grass');
   ok(offered(grass, state, at(3, 3)).includes('forage'), 'grass should be forageable');
+  ok(offered(grass, state, at(3, 3)).includes('gather_grain'), 'grass should offer wild seed gathering');
   ok(!offered(grass, state, at(3, 3)).includes('gather_flint'), 'no flint in a meadow');
 
   const stone = ground('stony');
@@ -121,7 +124,7 @@ test('pine woods fell to pine floor, not oak', () => {
 
 // ------------------------------------------------------------------ cliffs
 
-test('mining a cliff cuts it down until it can be climbed', () => {
+test('mining a cliff yields stone without lowering the cliff', () => {
   const world = ground('grass');
   world.map.place(4, 3, 'stony', 5);
   const state = ready();
@@ -131,20 +134,14 @@ test('mining a cliff cuts it down until it can be climbed', () => {
   ok(!canStep(world.map, at(3, 3), at(4, 3)), 'a five-high face should be unclimbable');
   eq(cliffTarget(world.map, world.map.get(3, 3)).h, 5, 'the tall neighbour is the face');
 
-  let cuts = 0;
-  while (offered(world, state, at(3, 3)).includes('mine_cliff') && cuts < 10) {
-    const before = face();
+  for (let i = 0; i < 4; i++) {
+    ok(offered(world, state, at(3, 3)).includes('mine_cliff'), 'mine_cliff should still be offered beside the cliff');
     const result = harvest(world, state, at(3, 3), 'mine_cliff', rng());
-    ok(result.ok, `cut ${cuts} failed: ${result.message}`);
-    eq(face(), before - 1, 'each cut should take one level off');
-    cuts++;
+    ok(result.ok, `cut ${i} failed: ${result.message}`);
+    eq(face(), 5, 'mining should not lower the cliff face');
   }
 
-  eq(face(), 1, 'mining should stop once the face can be climbed');
   ok(countItem(state, 'stone') > 0, 'and it should have yielded stone');
-  // One more level off by hand and it becomes walkable — the point of the exercise.
-  world.map.get(4, 3).h = 1;
-  ok(canStep(world.map, at(3, 3), at(4, 3)), 'a one-level step should be walkable');
 });
 
 test('mining needs a tool', () => {
@@ -259,23 +256,47 @@ test('a planted field ripens and can then be harvested', () => {
   ok(reaped.ok, reaped.message);
   ok(countItem(state, 'grain') > 0, 'a harvest should give grain');
   eq(world.map.get(3, 3).feature.ripe, false, 'and leave the field to grow again');
+
+  addItem(state, 'herb_seed', 4);
+  const herbBuild = build(world, state, at(3, 3), 'herb_field', at(3, 2), { at: at(3, 3), distance });
+  ok(herbBuild.ok, herbBuild.message);
+  eq(world.map.get(3, 2).feature.kind, 'herb', 'an herb field should record its kind');
+  state.time += FIELD_RIPENS_IN;
+  growCrops(world, state);
+  const reapedHerb = harvest(world, state, at(3, 2), 'harvest_field', rng());
+  ok(reapedHerb.ok, reapedHerb.message);
+  ok(countItem(state, 'herb') >= 3, 'an herb field harvest should give herbs');
 });
 
 // -------------------------------------------------------------- in a world
 
-test('a real world offers something to do at the spawn', () => {
+test('a real world keeps the spawn clear and offers ways to start nearby', () => {
   for (const seed of ['alpha', 'bravo', 'charlie']) {
     const map = generateWorld({ seed, radius: 20, resolvers });
     const world = { map, resolvers, seed };
     const state = createState();          // level 1, no tools, no food
+    const spawnCol = map.get(map.spawn.q, map.spawn.r);
+
+    eq(resourcesAt(map, spawnCol), [], `${seed}: spawn should stay clear of hidden resources`);
+    eq(nodesAt(map, state, spawnCol), [], `${seed}: spawn should stay clear of nodes`);
+    eq(harvestsHere(map, state, map.spawn), [], `${seed}: spawn should stay clear of harvests`);
+
+    const nearOffers = neighbors(map.spawn.q, map.spawn.r)
+      .flatMap(n => determineContext(world, state, n).offers);
+    const ids = nearOffers.map(o => o.id);
+    ok(nearOffers.some(o => o.kind === 'harvest' && harvestSpec(o.id).energy <= state.energy),
+      `${seed}: no way to start beside spawn — offers were ${ids.join(', ')}`);
+
+    addItem(state, 'branch', 1);
+    addItem(state, 'flint', 1);
     const ctx = determineContext(world, state, map.spawn);
-    ok(ctx.offers.length > 0, `${seed}: nothing to do where you wake up`);
-    // Something you can do on the energy you wake with. (Berries are hidden
-    // until the hex is explored, so foraging is not on the list yet; what is
-    // has to be work the first twenty energy covers.)
-    const ids = ctx.offers.map(o => o.id);
-    ok(ctx.offers.some(o => o.kind === 'harvest' && harvestSpec(o.id).energy <= state.energy),
-      `${seed}: no way to start — offers were ${ids.join(', ')}`);
+    ok(ctx.offers.some(o => o.id === 'relight_campfire'), `${seed}: holding branch + flint should offer relight_campfire`);
+    const lit = relightCampfire(world, state, map.spawn);
+    ok(lit.ok, `${seed}: ${lit.message}`);
+    eq(countItem(state, 'branch'), 0, `${seed}: relighting should consume 1 branch`);
+    eq(countItem(state, 'flint'), 0, `${seed}: relighting should consume 1 flint`);
+    eq(spawnCol.feature?.item, 'hearth', `${seed}: spawn should become a lit hearth`);
+    ok(hasBuilt(state, 'hearth'), `${seed}: relighting should record a built hearth`);
   }
 });
 
@@ -344,6 +365,16 @@ test('a ladder is placed against a cliff, and opens it', () => {
 
   // And it is a joint between two named columns, not a general climbing permit.
   ok(!canStep(world.map, at(3, 2), at(4, 3)), 'the ladder let you climb from the wrong hex');
+
+  // Ladders can also be leaned from a wooded cliff base without destroying the trees.
+  world.map.place(1, 5, 'oak_wood', 1);
+  world.map.get(1, 5).feature = { type: 'trees', remaining: 4, kind: 'oak' };
+  world.map.place(2, 5, 'stony', 14);
+  ok(placementSpots(world, state, at(1, 5), 'ladder').some(s => s.q === 2 && s.r === 5), 'wooded foot hex should allow ladder placement');
+  const woodRes = build(world, state, at(1, 5), 'ladder', at(2, 5), { at: at(1, 5), distance });
+  ok(woodRes.ok, woodRes.message);
+  eq(world.map.get(1, 5).feature.type, 'trees', 'leaning a ladder should preserve existing trees');
+  ok(canStep(world.map, at(1, 5), at(2, 5)), 'ladder from wooded hex should open the cliff');
 });
 
 test('a ladder survives a save and reload', () => {
@@ -357,6 +388,35 @@ test('a ladder survives a save and reload', () => {
 
   const reloaded = WorldMap.fromJSON(JSON.parse(JSON.stringify(world.map.toJSON())));
   ok(canStep(reloaded, at(3, 3), at(4, 3)), 'the ladder was lost in the save');
+});
+
+test('shaking a tree yields a branch once per cooldown without felling it', () => {
+  const world = ground('oak_wood');
+  const col = world.map.get(3, 3);
+  col.feature = { type: 'trees', kind: 'oak', remaining: 2 };
+  const state = ready();
+
+  const first = shakeTree(world, state, at(3, 3));
+  ok(first.ok, 'shake should succeed');
+  eq(first.gained.length, 1, 'should shake loose one branch');
+  eq(first.gained[0].id, 'branch', 'should drop a branch');
+  eq(col.feature.remaining, 2, 'shaking should not fell the tree');
+
+  const second = shakeTree(world, state, at(3, 3));
+  eq(second.gained.length, 0, 'cooldown prevents immediate repeat branch');
+});
+
+test('visible stone nodes diminish permanently when gathered', () => {
+  const world = ground('stony');
+  world.map.spawn = { q: 0, r: 0 };
+  const col = [...world.map].find(c => (c.q !== 0 || c.r !== 0) && rocksOn(world.map, c) >= 1);
+  const state = ready();
+  const initial = col ? rocksOn(world.map, col) : 0;
+  ok(col && initial >= 1, 'non-spawn stony ground should have at least one rock to gather');
+  eq(nodesAt(world.map, state, col).filter(n => n.kind === 'stone').length, initial, 'stone nodes match rocksOn');
+
+  takeNode(state, col, 'gather_stone');
+  eq(nodesAt(world.map, state, col).filter(n => n.kind === 'stone').length, initial - 1, 'picking a stone removes one visible stone');
 });
 
 run('world');

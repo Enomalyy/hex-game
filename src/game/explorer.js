@@ -10,30 +10,25 @@
 //
 // Pure timing, no drawing: render/discovery_fx.js draws `charge`.
 
-import { TIERS, exploreSeconds, scenicOf, isExplored } from './discovery.js';
+import { EXPLORE_SECONDS, MEDITATION_SECONDS, TIERS, exploreSeconds, scenicOf, isExplored, isMeditated } from './discovery.js';
 
 /** Where each circuit of the ticker starts and ends, in seconds. */
-export const PHASE_ENDS = TIERS.map(t => t.seconds);
+export const PHASE_ENDS = [EXPLORE_SECONDS];
 
 /**
  * Which circuit the ticker is on at `t` seconds, and how far round it is.
  * @returns {{phase:number, frac:number}}
  */
 export function phaseAt(t) {
-  let start = 0;
-  for (let i = 0; i < PHASE_ENDS.length; i++) {
-    const end = PHASE_ENDS[i];
-    if (t < end) return { phase: i, frac: (t - start) / (end - start) };
-    start = end;
-  }
-  return { phase: PHASE_ENDS.length - 1, frac: 1 };
+  return { phase: 0, frac: Math.max(0, Math.min(1, t / EXPLORE_SECONDS)) };
 }
 
 export class Explorer {
   constructor(map, state) {
     this.map = map;
     this.state = state;
-    this.charge = null;    // { q, r, t, duration, tier }
+    this.charge = null;      // { q, r, t, duration, tier }
+    this.meditation = null;  // { q, r, t, duration, tier, name }
   }
 
   /**
@@ -64,6 +59,38 @@ export class Explorer {
 
     const done = { q: col.q, r: col.r, tier: this.charge.tier };
     this.charge = null;
+    return done;
+  }
+
+  /** Begin meditating on an explored scenic hex while seated. */
+  startMeditation(q, r) {
+    const col = this.map.get(q, r);
+    if (!col || !isExplored(this.state, q, r) || isMeditated(this.state, q, r)) return false;
+    const { tier, name } = scenicOf(this.map, col);
+    if (!tier) return false;
+    if (this.meditation && this.meditation.q === q && this.meditation.r === r) return true;
+    this.meditation = { q, r, t: 0, duration: MEDITATION_SECONDS, tier, name };
+    return true;
+  }
+
+  /** Advance active meditation; cancels cleanly if the player moves or gets up. */
+  updateMeditation(dt, player, canDwell) {
+    if (!this.meditation) return null;
+    if (!canDwell || player.moving || !player.seated
+      || player.q !== this.meditation.q || player.r !== this.meditation.r
+      || isMeditated(this.state, player.q, player.r)) {
+      this.meditation = null;
+      return null;
+    }
+    this.meditation.t += dt;
+    if (this.meditation.t < this.meditation.duration) return null;
+    const done = {
+      q: this.meditation.q,
+      r: this.meditation.r,
+      tier: this.meditation.tier,
+      name: this.meditation.name,
+    };
+    this.meditation = null;
     return done;
   }
 }

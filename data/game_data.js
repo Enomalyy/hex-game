@@ -32,19 +32,20 @@ export const ITEMS = {
   grain:   I('grain', 'Grain', 'raw', { food: 1, stack: 40, desc: 'Food, seed for a field, and the makings of bread and stew.' }),
   meat:    I('meat', 'Raw Meat', 'raw', { food: 2, stack: 20, desc: 'From hunting. Cook it at a hearth for far more energy.' }),
   fish:    I('fish', 'Fish', 'raw', { food: 2, stack: 20, desc: 'Caught with a rod by the water. Cook it at a hearth.' }),
-  herb:    I('herb', 'Herb', 'raw', { stack: 20, desc: 'Medicine. Goes into salve, stew and shrines.' }),
-  branch:  I('branch', 'Branch', 'raw', { desc: 'Hafts every early tool. Gathered from woods and meadows.' }),
+  herb:    I('herb', 'Herb', 'raw', { stack: 20, desc: 'Medicine found rarely in tall grass or grown from seed. Goes into salve, stew and shrines.' }),
+  herb_seed: I('herb_seed', 'Herb Seeds', 'raw', { iconId: 'seeds', stack: 20, desc: 'Rare wild herb seeds found in tall grass. Sow an herb patch to grow your own medicine.' }),
+  branch:  I('branch', 'Branch', 'raw', { desc: 'Hafts every early tool, or sparks your cold campfire back to life with flint. Gathered from woods and meadows.' }),
   log:     I('log', 'Log', 'raw', { desc: 'Felled with an axe. Fuel, framing, and planks.' }),
   reed:    I('reed', 'Reed', 'raw', { desc: 'Cut by low water. Twisted into cord, woven into baskets and thatch.' }),
   stone:   I('stone', 'Stone', 'raw', { desc: 'Picked up below any rise, or mined out of a cliff face.' }),
-  flint:   I('flint', 'Flint', 'raw', { desc: 'A sharp edge. Knives, amulets and whetstones.' }),
+  flint:   I('flint', 'Flint', 'raw', { desc: 'A sharp edge. Strike against a branch to relight your campfire, or knap into knives, amulets and whetstones.' }),
   clay:    I('clay', 'Clay', 'raw', { desc: 'Dug at low banks. Pots, salve, and the forge lining.' }),
   hide:    I('hide', 'Hide', 'raw', { desc: 'Skinned from game with a knife. Cord, armour and packs.' }),
   ore:     I('ore', 'Ore', 'raw', { desc: 'Only visible to someone who knows Lore (Mind 3). Smelted into ingots.' }),
 
   // ------------------------------------------------------------ materials
   cord:    I('cord', 'Cord', 'material', { desc: 'Binds heads to hafts. Also sets a snare (used up when hunting without a bow).' }),
-  plank:   I('plank', 'Plank', 'material', { desc: 'Split from a log. Every proper wooden build needs them.' }),
+  plank:   I('plank', 'Plank', 'material', { desc: 'Split and whittled from a log with an axe and knife. Every wooden build needs them.' }),
   block:   I('block', 'Stone Block', 'material', { iconId: 'stone_block', desc: 'Dressed stone for walls, the forge and shrines.' }),
   ingot:   I('ingot', 'Ingot', 'material', { desc: 'Smelted metal. The great unlock.' }),
 
@@ -56,15 +57,15 @@ export const ITEMS = {
   salve:   I('salve', 'Salve', 'food', { heal: 5, stack: 10, desc: 'Heals 5 health. Used automatically when you are badly hurt.' }),
 
   // ---------------------------------------------------------------- tools
-  stone_knife:  I('stone_knife', 'Flint Knife', 'tool', { attack: 1, desc: 'Skins game for hide when you hunt, cuts hide into cord.' }),
+  stone_knife:  I('stone_knife', 'Flint Knife', 'tool', { attack: 1, desc: 'Whittles logs into planks for ladders, skins game for hide, and cuts hide into cord.' }),
   stone_axe:    I('stone_axe', 'Stone Axe', 'tool', { attack: 2, desc: 'Fells trees for logs and splits logs into planks.' }),
-  stone_hammer: I('stone_hammer', 'Stone Hammer', 'tool', { attack: 1, desc: 'Dresses stone into blocks, mines cliff faces and (slowly) ore.' }),
+  stone_hammer: I('stone_hammer', 'Stone Hammer', 'tool', { attack: 1, desc: 'Dresses stone into blocks, quarries cliff faces and (slowly) ore.' }),
   fishing_rod:  I('fishing_rod', 'Fishing Rod', 'tool', { desc: 'Fish from any bank where fish are known to be.' }),
   pot:          I('pot', 'Clay Pot', 'tool', { desc: 'Needed to cook stew and mix salve.' }),
   wood_tongs:   I('wood_tongs', 'Green-wood Tongs', 'tool', { iconId: 'bone_tongs', desc: 'Hold hot metal. Enough to smelt, and to forge iron tongs.' }),
   iron_tongs:   I('iron_tongs', 'Iron Tongs', 'tool', { iconId: 'tongs', desc: 'Smelt 3 ore into 2 ingots instead of 2 into 1.' }),
   iron_axe:     I('iron_axe', 'Iron Axe', 'tool', { attack: 3, iconId: 'axe', desc: 'Fells two logs at a time. A fine weapon too.' }),
-  pickaxe:      I('pickaxe', 'Pickaxe', 'tool', { attack: 2, desc: 'Mines ore three times faster than a hammer; rips cliffs down.' }),
+  pickaxe:      I('pickaxe', 'Pickaxe', 'tool', { attack: 2, desc: 'Mines ore three times faster than a hammer; quarries cliff faces swiftly.' }),
   saw:          I('saw', 'Iron Saw', 'tool', { desc: 'Saws a log into four planks instead of two.' }),
   boat:         I('boat', 'Boat', 'tool', { desc: 'Carry it and you can row across rivers and lakes.' }),
 
@@ -86,7 +87,7 @@ export const ITEMS = {
   hearth:     I('hearth', 'Hearth', 'structure', { hp: 8, desc: 'Cook, bake and fire pots here. Rest beside it to heal. Your respawn point.' }),
   hut:        I('hut', 'Hut', 'structure', { hp: 14, iconId: 'cabin', desc: 'Home. +6 max energy, a 16-slot stash, full heal when you rest, respawn point.' }),
   workbench:  I('workbench', 'Workbench', 'structure', { hp: 8, desc: 'Bows, boats, shields and carts are made here.' }),
-  field:      I('field', 'Field', 'structure', { hp: 4, desc: 'Sow grain; reap three to five times as much a day later.' }),
+  field:      I('field', 'Field', 'structure', { hp: 4, desc: 'Sow grain or rare herb seeds; reap a rich harvest a day later.' }),
   palisade:   I('palisade', 'Palisade', 'structure', { hp: 10, iconId: 'wood_fence', wall: true, desc: 'A wall raiders cannot pass; they must hack through it.' }),
   stone_wall: I('stone_wall', 'Stone Wall', 'structure', { hp: 22, wall: true, desc: 'A wall twice as tough as a palisade.' }),
   watchtower: I('watchtower', 'Watchtower', 'structure', { hp: 12, desc: 'Shoots any raider within 3 hexes, and warns you of raids early.' }),
@@ -97,7 +98,7 @@ export const ITEMS = {
 };
 
 export const ITEM_BASE_PRICES = {
-  berries: 1, grain: 1, meat: 2, fish: 2, herb: 3, branch: 1, log: 2, reed: 1,
+  berries: 1, grain: 1, meat: 2, fish: 2, herb: 3, herb_seed: 4, branch: 1, log: 2, reed: 1,
   stone: 1, flint: 2, clay: 2, hide: 4, ore: 8,
   cord: 2, plank: 3, block: 4, ingot: 16,
   meal: 5, bread: 4, stew: 8, rations: 6, salve: 10,
@@ -131,7 +132,7 @@ export const RECIPES = {
   cord_hide:    R('cord_hide', 'Cut Hide Cord', 'woodworking', 1, { hide: 1 }, { cord: 3 }, { xp: 3, tools: ['stone_knife'] }),
   basket:       R('basket', 'Basket', 'woodworking', 1, { reed: 4, branch: 2 }, { basket: 1 }, { xp: 6 }),
   fishing_rod:  R('fishing_rod', 'Fishing Rod', 'woodworking', 1, { branch: 2, cord: 1 }, { fishing_rod: 1 }, { xp: 5 }),
-  split_planks: R('split_planks', 'Split Planks', 'woodworking', 2, { log: 1 }, { plank: 2 }, { xp: 4, tools: [['stone_axe', 'iron_axe']] }),
+  split_planks: R('split_planks', 'Split Planks', 'woodworking', 2, { log: 1 }, { plank: 2 }, { xp: 4, tools: [['stone_axe', 'iron_axe'], 'stone_knife'] }),
   saw_planks:   R('saw_planks', 'Saw Planks', 'woodworking', 2, { log: 1 }, { plank: 4 }, { xp: 5, tools: ['saw'] }),
   palisade:     R('palisade', 'Palisade', 'woodworking', 2, { log: 3 }, { palisade: 1 }, { xp: 6, category: 'build' }),
   workbench:    R('workbench', 'Workbench', 'woodworking', 2, { log: 2, plank: 4 }, { workbench: 1 }, { xp: 10, category: 'build', tools: [['stone_axe', 'iron_axe']] }),
@@ -148,6 +149,7 @@ export const RECIPES = {
   cook_meat:    R('cook_meat', 'Cook Meat', 'homesteading', 1, { meat: 1 }, { meal: 1 }, { xp: 2, tools: ['hearth'] }),
   cook_fish:    R('cook_fish', 'Cook Fish', 'homesteading', 1, { fish: 1 }, { meal: 1 }, { xp: 2, tools: ['hearth'] }),
   field:        R('field', 'Sow a Field', 'homesteading', 2, { grain: 2 }, { field: 1 }, { xp: 6, category: 'build' }),
+  herb_field:   R('herb_field', 'Sow Herbs', 'homesteading', 2, { herb_seed: 2 }, { field: 1 }, { xp: 8, category: 'build' }),
   bread:        R('bread', 'Bake Bread', 'homesteading', 2, { grain: 3 }, { bread: 2 }, { xp: 4, tools: ['hearth'] }),
   pot:          R('pot', 'Fire a Clay Pot', 'homesteading', 2, { clay: 3 }, { pot: 1 }, { xp: 6, tools: ['hearth'] }),
   hut:          R('hut', 'Hut', 'homesteading', 3, { log: 6, plank: 4, reed: 4 }, { hut: 1 }, { xp: 20, category: 'build' }),
@@ -178,7 +180,7 @@ export const RECIPES = {
 /** One line per level: what reaching it opens up. */
 export const SKILL_INFO = {
   stoneworking: {
-    1: ['Flint Knife, Stone Axe, Stone Hammer.', 'Gather stone and flint; mine cliff faces with a hammer.'],
+    1: ['Flint Knife, Stone Axe, Stone Hammer.', 'Gather stone and flint; quarry cliff faces with a hammer.'],
     2: ['Dress stone into blocks.'],
     3: ['Stone Walls.', 'The Forge (needs clay and logs too).'],
     4: ['Whetstone: +1 attack die.', 'Shrine (with Mind 3): a sanctuary raiders will not touch.'],
@@ -186,14 +188,14 @@ export const SKILL_INFO = {
   },
   woodworking: {
     1: ['Twist cord from reeds, or cut it from hide.', 'Basket (+4 slots), Fishing Rod.'],
-    2: ['Split planks.', 'Palisade walls, and the Workbench.'],
+    2: ['Split planks (with axe and knife).', 'Palisade walls, and the Workbench.'],
     3: ['Ladders to climb cliffs.', 'Bow and Wooden Shield (at a workbench).'],
     4: ['Boat: row across water.', 'Watchtower: shoots raiders, warns of raids.'],
     5: ['Bridge across the river.', 'Cart: +8 slots and fast roads.'],
   },
   homesteading: {
-    1: ['Hearth: cook, rest, respawn.', 'Cook meat and fish into meals.'],
-    2: ['Sow fields, bake bread, fire clay pots.'],
+    1: ['Relight the campfire (branch + flint) or build a Hearth: cook, rest, respawn.', 'Cook meat and fish into meals.'],
+    2: ['Sow grain or herb fields, bake bread, fire clay pots.'],
     3: ['Hut: home, stash, more energy.', 'Stew, and Hide Armour.'],
     4: ['Leather Pack (+6 slots).', 'Tame a Dog (with Mind 2).'],
     5: ['Trail Rations: dense food for long trips.'],
@@ -206,7 +208,7 @@ export const SKILL_INFO = {
     5: ['Master Smith: every smelt gives one ingot more.'],
   },
   mind: {
-    1: ['Mind grows by going places: scenic finds, villages, the wild.', 'Find herbs. Flint Amulet (+1 defence).'],
+    1: ['Mind grows by meditating at scenic places and exploring the wild.', 'Find herbs. Flint Amulet (+1 defence).'],
     2: ['Salve heals 5 (needs a pot).', 'Dogs will trust you.'],
     3: ['LORE: read the rock. Ore shows itself, and you can prospect.', 'Shrines (with Stoneworking 4).'],
     4: ['Wayfinding: every village you trust reveals twice as much land.'],
@@ -221,13 +223,13 @@ export const SKILL_INFO = {
 export const VILLAGE_KINDS = {
   farmers:    { name: 'Farmers',    sells: ['grain', 'bread', 'meal', 'pot'], station: 'hearth',
                 favours: [{ item: 'berries', qty: 5 }, { item: 'meal', qty: 2 }] },
-  woodcutters:{ name: 'Woodcutters', sells: ['log', 'plank', 'cord', 'bow'], station: 'workbench',
+  woodcutters:{ name: 'Woodcutters', sells: ['log', 'plank', 'cord', 'stone_knife', 'bow'], station: 'workbench',
                 favours: [{ item: 'branch', qty: 6 }, { item: 'log', qty: 3 }] },
   masons:     { name: 'Masons',     sells: ['stone', 'block', 'stone_hammer', 'clay'], station: 'workbench',
                 favours: [{ item: 'stone', qty: 6 }, { item: 'block', qty: 2 }] },
   fishers:    { name: 'Fishers',    sells: ['fish', 'reed', 'fishing_rod', 'boat'], station: 'hearth',
                 favours: [{ item: 'reed', qty: 6 }, { item: 'fish', qty: 3 }] },
-  herbalists: { name: 'Herbalists', sells: ['herb', 'salve', 'amulet', 'clay'], station: 'hearth',
+  herbalists: { name: 'Herbalists', sells: ['herb', 'herb_seed', 'salve', 'stone_knife', 'amulet', 'clay'], station: 'hearth',
                 favours: [{ item: 'herb', qty: 2 }, { item: 'hide', qty: 2 }] },
   smiths:     { name: 'Smiths',     sells: ['ore', 'ingot', 'wood_tongs', 'pickaxe'], station: 'forge',
                 favours: [{ item: 'log', qty: 4 }, { item: 'stone', qty: 8 }] },

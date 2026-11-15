@@ -94,12 +94,12 @@ export const TERRAIN = {
   // is left for the editor. Frames 1 and 5 of the oak sheet have a rock painted
   // in for the same reason, and are passed over.
   meadow:       { name: 'Meadow',       sheets: ['Tiles_GrassBase1', 'Tiles_GrassBase2', 'Tiles_GrassBase3'], walk: true, forage: true },
-  oak_wood:     { name: 'Oak Wood',     sheets: ['Tiles_DecorOak'],  frames: [0, 2, 3, 4], walk: true, trees: 'oak',  overhang: true },
+  oak_wood:     { name: 'Oak Wood',     sheets: ['Tiles_DecorOak'],  frames: [0, 2], walk: true, trees: 'oak',  overhang: true },
   pine_wood:    { name: 'Pine Wood',    sheets: ['Tiles_DecorPine'], walk: true, trees: 'pine', overhang: true },
   forest_floor: { name: 'Forest Floor', sheets: ['Tiles_ForestFloor'], walk: true },
   pine_floor:   { name: 'Pine Floor',   sheets: ['Tiles_PineFloor'], walk: true },
-  steppes:      { name: 'Steppes',      sheets: ['Tiles_Steppes'], walk: true },
-  stony:        { name: 'Stony Ground', sheets: ['Tiles_Stony'], walk: true, stone: true },
+  steppes:      { name: 'Steppes',      sheets: ['Tiles_Steppes'], frames: [0, 1, 2], walk: true },
+  stony:        { name: 'Stony Ground', sheets: ['Tiles_Stony'], frames: [0, 1], walk: true, stone: true },
   farm:         { name: 'Field',        sheets: ['Tiles_FarmingBase'], walk: true, farm: true },
   water:        { name: 'Water',        sheets: ['Tiles_LakeBase'], walk: false, water: true, autotile: 'lake' },
   // The big river draws deep water off the lake set, not the stony shallow

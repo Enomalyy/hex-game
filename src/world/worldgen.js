@@ -88,6 +88,11 @@ class Generator {
     this.seedOre(map);
     this.placeCamps(map);
     map.spawn = this.spawn;
+    const spawnCol = map.get(this.spawn.q, this.spawn.r);
+    if (spawnCol?.feature?.type === 'trees') {
+      delete spawnCol.feature;
+      map.place(this.spawn.q, this.spawn.r, 'grass', spawnCol.h);
+    }
     this.placeCrossings(map);
     resolveAutotiles(map, this.opt.resolvers);
     return map;

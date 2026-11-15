@@ -9,6 +9,8 @@ import { nearbyOre, cliffTarget } from './harvests.js';
 import { harvestsHere } from './discovery.js';
 import { levelOf } from './skills.js';
 import { isTrusted } from './economy.js';
+import { countItem } from './inventory.js';
+import { isFree } from './state.js';
 
 /** The first column on this hex or the next one over that passes `test`. */
 function nearby(map, at, test) {
@@ -22,6 +24,12 @@ function nearby(map, at, test) {
 export const villageNear = (map, at) => nearby(map, at, c => c.feature?.type === 'village');
 export const campNear = (map, at) => nearby(map, at, c => c.feature?.type === 'camp' && !c.feature.burned);
 export const structureNear = (map, at, item) => nearby(map, at, c => c.feature?.type === 'structure' && c.feature.item === item);
+export const campfireNear = (map, at) => {
+  if (!map.spawn) return null;
+  const col = map.get(map.spawn.q, map.spawn.r);
+  if (!col || col.feature) return null;
+  return nearby(map, at, c => c.q === map.spawn.q && c.r === map.spawn.r);
+};
 
 /** Structures within reach, so the crafting panel knows what you can work at. */
 export function structuresNear(map, at) {
@@ -46,10 +54,24 @@ export function determineContext(world, state, at, extra = {}) {
   const village = villageNear(map, at);
   const camp = campNear(map, at);
   const hut = structureNear(map, at, 'hut');
+  const campfire = campfireNear(map, at);
 
   const offers = harvests.filter(h => h.ok).map(h => ({
     kind: 'harvest', id: h.spec.id, label: h.spec.name, verb: h.spec.verb, skill: h.spec.skill,
   }));
+  const blocked = harvests.filter(h => !h.ok).map(h => ({ id: h.spec.id, label: h.spec.name, reasons: h.reasons }));
+
+  if (campfire) {
+    const canRelight = isFree(state) || (countItem(state, 'branch') >= 1 && countItem(state, 'flint') >= 1);
+    if (canRelight) {
+      offers.unshift({ kind: 'relight', id: 'relight_campfire', label: 'Relight Campfire', verb: 'Lighting', skill: 'homesteading', important: true, campfire });
+    } else {
+      const reasons = [];
+      if (countItem(state, 'branch') < 1) reasons.push('Needs 1 more Branch.');
+      if (countItem(state, 'flint') < 1) reasons.push('Needs 1 more Flint.');
+      blocked.unshift({ id: 'relight_campfire', label: 'Relight Campfire', reasons });
+    }
+  }
 
   if (['stony', 'steppes'].includes(col.terrain) && levelOf(state, 'mind') >= 3) {
     offers.push({ kind: 'prospect', id: 'prospect', label: 'Read the Rock', verb: 'Prospecting', skill: 'metalworking' });
@@ -67,9 +89,10 @@ export function determineContext(world, state, at, extra = {}) {
 
   return {
     offers,
-    blocked: harvests.filter(h => !h.ok).map(h => ({ id: h.spec.id, label: h.spec.name, reasons: h.reasons })),
+    blocked,
     village,
     camp,
+    campfire,
     vein: nearbyOre(map, col),
     cliff: cliffTarget(map, col),
     column: col,

@@ -31,7 +31,7 @@ export const HOW_TO_PLAY = `
     <div><b>Move</b><span>Click a hex. Drag to pan, wheel to zoom, <kbd>F</kbd> recentres.</span></div>
     <div><b>Explore</b><span>Stand still on a hex to explore it. Scenic places take longer and raise your <i>Mind</i>.
       Berries, herbs, flint, clay and fish only show on hexes you have explored.</span></div>
-    <div><b>Work</b><span>Buttons appear over the menu bar: what the ground you stand on gives. Press <kbd>1</kbd>&ndash;<kbd>9</kbd> for them.</span></div>
+    <div><b>Work</b><span>Click resources, campfires, huts, benches, villages, or cliff faces directly to gather, craft, trade, or mine.</span></div>
     <div><b>Food is energy</b><span>Work and walking burn energy; food in your pack refills it on its own.
       Cooked food packs more into a slot.</span></div>
     <div><b>Make &amp; build</b><span><kbd>C</kbd> Craft, <kbd>B</kbd> Build, <kbd>I</kbd> Pack (click an item to see what it is for).</span></div>

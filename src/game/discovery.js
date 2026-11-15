@@ -17,7 +17,7 @@
 // look at it, and nothing extra has to be saved with the map.
 
 import { xmur3, hash2 } from '../core/rng.js';
-import { neighbors, distance } from '../world/hexgrid.js';
+import { neighbors, distance, toAxial } from '../world/hexgrid.js';
 import { TERRAIN } from '../world/tileset.js';
 import { harvestSpec, availableHarvests } from './harvests.js';
 import { hasNode, NODE_HARVESTS } from './nodes.js';
@@ -29,11 +29,12 @@ import { createMindState } from './state.js';
  * Food is commonest so an early game is never starved by bad luck.
  */
 export const HIDDEN = {
-  forage: { chance: 0.6, icon: 'berries' },
-  find_herb: { chance: 0.3, icon: 'herb' },
+  forage: { chance: 0.14, icon: 'berries' },
+  gather_grain: { chance: 0.28, icon: 'grain', label: 'Tall Grass' },
+  find_herb: { chance: 0.08, icon: 'herb' },
   gather_flint: { chance: 0.5, icon: 'flint' },
-  dig_clay: { chance: 0.5, icon: 'clay' },
-  fish: { chance: 0.5, icon: 'fish' },
+  dig_clay: { chance: 0.36, icon: 'clay' },
+  fish: { chance: 0.40, icon: 'fish' },
 };
 
 export const isHidden = id => id in HIDDEN;
@@ -57,6 +58,7 @@ const key = (q, r) => `${q},${r}`;
 
 export const isExplored = (state, q, r) => key(q, r) in (state.mind?.explored || {});
 export const isKnown = (state, q, r) => !!state.mind?.known?.[key(q, r)];
+export const isMeditated = (state, q, r) => !!state.mind?.meditated?.[key(q, r)];
 
 // ------------------------------------------------------------ the resources
 
@@ -87,12 +89,26 @@ export function resourcesAt(map, col) {
   if (hit) return hit;
 
   const out = [];
-  // Where you wake there is always a berry bush: the first thing you find, the
-  // moment you have sat there long enough to look.
+  // Keep the starting campsite around your campfire clear of resources.
   const home = !!map.spawn && map.spawn.q === col.q && map.spawn.r === col.r;
+  if (home) {
+    cache.set(k, out);
+    return out;
+  }
+  const nearHome = !!map.spawn && distance(col.q, col.r, map.spawn.q, map.spawn.r) <= 7;
   for (const [id, h] of Object.entries(HIDDEN)) {
     if (!harvestSpec(id).where(col, map)) continue;
-    if ((home && id === 'forage') || roll(map, col.q, col.r, `res:${id}`) < h.chance) out.push(id);
+    let chance = h.chance;
+    if (id === 'forage') chance = col.terrain === 'grass' || col.terrain === 'steppes' ? 0.09 : 0.16;
+    else if (id === 'gather_flint') chance = col.h >= 8 ? 0.78 : col.h >= 6 ? 0.28 : (nearHome ? 0.25 : 0.12);
+    else if (id === 'find_herb') {
+      if (col.terrain === 'meadow' || col.terrain === 'grass' || col.terrain === 'steppes') {
+        chance = out.includes('gather_grain') ? 0.22 : (col.h >= 7 ? 0.18 : 0);
+      } else {
+        chance = col.h >= 7 ? 0.22 : 0.06;
+      }
+    }
+    if (roll(map, col.q, col.r, `res:${id}`) < chance) out.push(id);
   }
   cache.set(k, out);
   return out;
@@ -107,6 +123,7 @@ const resourceCache = new WeakMap();
 export function harvestsHere(map, state, at) {
   const col = map.get(at.q, at.r);
   if (!col) return [];
+  if (map.spawn && col.q === map.spawn.q && col.r === map.spawn.r) return [];
   const known = isKnown(state, col.q, col.r);
   const present = known ? new Set(resourcesAt(map, col)) : new Set();
   return availableHarvests(map, state, at)
@@ -116,27 +133,33 @@ export function harvestsHere(map, state, at) {
     .filter(h => !NODE_HARVESTS.has(h.spec.id) || !h.ok || hasNode(map, state, col, h.spec.id));
 }
 
-/** Mark every hex within `radius` of (q, r) as known. Returns the newly known. */
+/** Mark every hex within `radius` of (q, r) as known and explored. Returns newly revealed hexes. */
 export function revealAround(map, state, q, r, radius) {
   const mind = ensureMind(state);
   const fresh = [];
   for (const col of map) {
     if (distance(col.q, col.r, q, r) > radius) continue;
     const k = key(col.q, col.r);
-    if (mind.known[k]) continue;
+    const wasKnown = !!mind.known[k];
+    const wasExplored = k in mind.explored;
     mind.known[k] = 1;
-    fresh.push(col);
+    if (!wasExplored) mind.explored[k] = scenicOf(map, col).tier;
+    checkOreSign(map, state, col);
+    if (!wasKnown || !wasExplored) fresh.push(col);
   }
   return fresh;
 }
 
 // ------------------------------------------------------------------ scenery
 
+export const EXPLORE_SECONDS = 1.2;
+export const MEDITATION_SECONDS = 3.2;
+
 export const TIERS = [
-  { id: 'common', name: 'Common', xp: 0, seconds: 1.2 },
-  { id: 'copper', name: 'Copper', xp: 3, seconds: 2.6 },
-  { id: 'silver', name: 'Silver', xp: 7, seconds: 4 },
-  { id: 'gold', name: 'Gold', xp: 15, seconds: 5.5 },
+  { id: 'common', name: 'Common', xp: 0, meditateXp: 0, seconds: EXPLORE_SECONDS },
+  { id: 'copper', name: 'Quiet', xp: 0, meditateXp: 7, seconds: EXPLORE_SECONDS },
+  { id: 'silver', name: 'Serene', xp: 0, meditateXp: 13, seconds: EXPLORE_SECONDS },
+  { id: 'gold', name: 'Sublime', xp: 0, meditateXp: 24, seconds: EXPLORE_SECONDS },
 ];
 
 const WOODED = new Set(['oak_wood', 'pine_wood']);
@@ -202,6 +225,7 @@ export function scenicOf(map, col) {
       const rise = col.h - land.reduce((s, c) => s + c.h, 0) / land.length;
       add(col === facts.summit ? 'The Summit' : 'A Peak', 1.5 + Math.min(2.5, rise * 0.5 + col.h * 0.08));
     }
+    if (col.h >= 10) add('High Crag', 1.5);
 
     // A cliff edge you can see off.
     const drop = Math.max(0, ...land.map(c => col.h - c.h));
@@ -257,12 +281,116 @@ export const exploreSeconds = (map, col) => TIERS[scenicOf(map, col).tier].secon
 
 // ---------------------------------------------------------------- exploring
 
+/** How many hexes away a height advantage of `drop` levels can see. */
+export function sightForDrop(drop) {
+  if (drop < 3) return 0;
+  if (drop >= 15) return 7;
+  if (drop >= 12) return 6;
+  if (drop >= 9) return 5;
+  if (drop >= 6) return 4;
+  if (drop >= 4) return 3;
+  return 2;
+}
+
+/** How far exploring one hex sees across the country round it. Higher ground sees further. */
+export function exploreRadius(map, col) {
+  if (!col || isWaterCol(col) || col.h < 3) return 0;
+  let adjDrop = 0;
+  let underCliff = false;
+  for (const n of neighbors(col.q, col.r)) {
+    const c = map.get(n.q, n.r);
+    if (!c) continue;
+    if (col.h - c.h > adjDrop) adjDrop = col.h - c.h;
+    if (c.h - col.h >= 3) underCliff = true;
+  }
+  // A foothill sitting under a steep cliff with no 3-level drop of its own sees nothing.
+  if (underCliff && adjDrop < 3) return 0;
+  // In the lowlands, gentle ground without a 3-level cliff edge sees nothing.
+  if (col.h < 6 && adjDrop < 3) return 0;
+  if (col === factsOf(map).summit && adjDrop >= 3) return 7;
+  if (underCliff) return sightForDrop(adjDrop);
+
+  let maxDrop = adjDrop;
+  for (const c of map) {
+    if (distance(c.q, c.r, col.q, col.r) <= 7 && col.h - c.h > maxDrop) {
+      maxDrop = col.h - c.h;
+    }
+  }
+  if (col === factsOf(map).summit && maxDrop >= 3) return 7;
+  return sightForDrop(maxDrop);
+}
+
+/** Whether any taller ridge blocks the sightline from a vantage point to a lower hex. */
+function hasLineOfSight(map, origin, target) {
+  const d = distance(origin.q, origin.r, target.q, target.r);
+  if (d <= 1) return true;
+  const a = toAxial(origin.q, origin.r);
+  const b = toAxial(target.q, target.r);
+  const ax = a.aq, az = a.ar, ay = -ax - az;
+  const bx = b.aq, bz = b.ar, by = -bx - bz;
+  for (let i = 1; i < d; i++) {
+    const t = i / d;
+    const x = ax + (bx - ax) * t + 1e-6;
+    const y = ay + (by - ay) * t + 1e-6;
+    const z = az + (bz - az) * t - 2e-6;
+    let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
+    const dx = Math.abs(rx - x), dy = Math.abs(ry - y), dz = Math.abs(rz - z);
+    if (dx > dy && dx > dz) rx = -ry - rz;
+    else if (dy > dz) ry = -rx - rz;
+    else rz = -rx - ry;
+    const mid = map.get(rx, rz + ((rx - (rx & 1)) >> 1));
+    if (mid && mid.h >= origin.h) return false;
+  }
+  return true;
+}
+
+/** Record an ore trace on `col` if the player has Lore (Mind 3) and an unknown vein is near. */
+export function checkOreSign(map, state, col) {
+  if (!col || levelOf(state, 'mind') < 3) return false;
+  const mind = ensureMind(state);
+  const k = key(col.q, col.r);
+  if (mind.oreSigns[k]) return false;
+  for (const c of map) {
+    if (c.feature?.type !== 'ore' || c.feature.known || !(c.feature.remaining > 0)) continue;
+    if (distance(c.q, c.r, col.q, col.r) <= ORE_SIGN_RADIUS) {
+      mind.oreSigns[k] = 1;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Reveal any lower countryside overlooked by `col` that is not yet known. */
+export function revealVistaFrom(map, state, col) {
+  if (!col) return [];
+  const mind = ensureMind(state);
+  const radius = exploreRadius(map, col);
+  const isSummit = col === factsOf(map).summit;
+  const revealed = [];
+  if (radius > 0) {
+    for (const c of map) {
+      const d = distance(c.q, c.r, col.q, col.r);
+      if (c === col || d > radius) continue;
+      const drop = col.h - c.h;
+      if (drop < 3) continue;
+      if (!isSummit && d > sightForDrop(drop)) continue;
+      if (!hasLineOfSight(map, col, c)) continue;
+      const ck = key(c.q, c.r);
+      if (!mind.known[ck]) {
+        mind.known[ck] = 1;
+        revealed.push(c);
+      }
+    }
+  }
+  return revealed;
+}
+
 /**
- * Finish exploring a hex: mark it, learn its resources, and see whether it was
- * somewhere. Mind xp and achievements are mind.js's business; this reports what
- * was found so it can award them.
+ * Finish exploring a hex: mark it, learn its resources, reveal surrounding
+ * ground when high enough to overlook it, and note whether it is scenic.
+ * Scenic Mind xp is earned by sitting down to meditate there (see meditateHex).
  *
- * @returns {null | {tier, name, xp, resources:string[], oreSign:boolean}}
+ * @returns {null | {tier, name, xp, meditateXp, resources:string[], oreSign:boolean, revealed:Array, radius:number}}
  *          null if it was already explored.
  */
 export function exploreHex(map, state, q, r) {
@@ -273,18 +401,32 @@ export function exploreHex(map, state, q, r) {
 
   const { tier, name } = scenicOf(map, col);
   mind.explored[k] = tier;
+  mind.surveyed ||= {};
+  mind.surveyed[k] = tier;
   mind.known[k] = 1;
+
+  const radius = exploreRadius(map, col);
+  const revealed = revealVistaFrom(map, state, col);
 
   // Lore teaches you what ore looks like in the rock; before that, a trace of it
   // is just rock. A trace says a vein is near, not where — prospecting does that.
-  let oreSign = false;
-  if (levelOf(state, 'mind') >= 3) {
-    for (const c of map) {
-      if (c.feature?.type !== 'ore' || c.feature.known || !(c.feature.remaining > 0)) continue;
-      if (distance(c.q, c.r, q, r) <= ORE_SIGN_RADIUS) { oreSign = true; break; }
-    }
-    if (oreSign) mind.oreSigns[k] = 1;
-  }
+  const oreSign = checkOreSign(map, state, col);
 
-  return { tier, name, xp: TIERS[tier].xp, resources: resourcesAt(map, col), oreSign };
+  return {
+    tier, name, xp: 0, meditateXp: TIERS[tier].meditateXp,
+    resources: resourcesAt(map, col), oreSign, revealed, radius,
+  };
+}
+
+/** Finish meditating on an explored scenic hex. Pays Mind xp once. */
+export function meditateHex(map, state, q, r) {
+  const mind = ensureMind(state);
+  mind.meditated ||= {};
+  const col = map.get(q, r);
+  const k = key(q, r);
+  if (!col || !isExplored(state, q, r) || mind.meditated[k]) return null;
+  const { tier, name } = scenicOf(map, col);
+  if (!tier) return null;
+  mind.meditated[k] = 1;
+  return { tier, name, xp: TIERS[tier].meditateXp };
 }

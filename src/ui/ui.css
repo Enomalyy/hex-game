@@ -166,6 +166,7 @@ html, body {
 /* ------------------------------------------------------------ journey */
 
 #journey { max-width: 270px; text-align: right; }
+#journey:empty { display: none; }
 
 /* The one line. It arrives clearly, then settles back. */
 .goal-now { font-style: italic; color: var(--ink); opacity: 0.62; transition: opacity 1600ms ease-out; }
@@ -618,6 +619,17 @@ button.slot:hover, .slot.selected { border-color: var(--accent); }
 .village-kind { font-size: 13px; }
 .favour { padding: 10px 12px; border: 1px solid var(--panel-edge); border-radius: 4px; background: rgba(217, 180, 91, 0.06); }
 .elder { font-family: Georgia, serif; font-size: 15px; font-style: italic; }
+.rumour-box {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 14px; padding: 8px 12px; border: 1px dashed rgba(107, 88, 54, 0.7);
+  border-radius: 4px; background: rgba(217, 180, 91, 0.04);
+}
+.rumour { margin: 0; font-size: 13px; color: #e2d3ad; }
+.link-btn {
+  flex: none; padding: 3px 9px; background: #2b2519; border: 1px solid var(--panel-edge);
+  border-radius: 3px; color: var(--ink-dim); font-family: inherit; font-size: 11px; cursor: pointer;
+}
+.link-btn:hover { border-color: var(--accent); color: var(--accent); }
 .raided { color: #ffb3bd; }
 .trade-row input { flex: 1; background: #111; color: var(--ink); border: 1px solid #3a3227; padding: 3px 6px; font-family: inherit; }
 

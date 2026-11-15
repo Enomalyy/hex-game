@@ -15,8 +15,16 @@
 // list that says only "no" is unplayable in an economy with this many gates.
 
 import { RECIPES, isBuilding, BUILD_REACH, builtNear, hasBuilt, itemName, isFree } from './state.js';
-import { countItem, hasRoomFor, addItem, removeItem, canSpend, spend } from './inventory.js';
+import { countItem, hasRoomFor, addItem, removeItem, canSpend, spend, hasSeenItem } from './inventory.js';
 import { addXp, levelOf } from './skills.js';
+
+/** Whether the player has seen every material needed to attempt this recipe. */
+export function recipeKnown(state, recipe) {
+  if (!recipe) return false;
+  if (isFree(state)) return true;
+  const parts = [...Object.keys(recipe.inputs || {}), ...Object.keys(recipe.perSpan || {})];
+  return parts.every(id => hasSeenItem(state, id));
+}
 
 /** Normalise `tools` into a list of any-of slots. */
 export function toolSlots(recipe) {

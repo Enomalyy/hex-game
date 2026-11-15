@@ -8,7 +8,7 @@
 
 import { tileCenter, topFaceCorners, traceTopFace } from '../world/hexgrid.js';
 import { phaseAt } from '../game/explorer.js';
-import { HIDDEN, resourcesAt, isKnown } from '../game/discovery.js';
+import { HIDDEN, resourcesAt, isKnown, isMeditated } from '../game/discovery.js';
 
 export const TIER_COLORS = [
   [255, 246, 220],   // common: warm white
@@ -108,6 +108,66 @@ export function drawExploreCharge(ctx, map, charge, now) {
   ctx.restore();
 }
 
+/**
+ * Serene breathing glow, concentric ripples, and rising spiral motes around a
+ * seated player meditating at a scenic spot.
+ */
+export function drawMeditationGlow(ctx, map, meditation, now) {
+  if (!meditation) return;
+  const h = Math.max(0, map.surfaceAt(meditation.q, meditation.r));
+  const { cx, cy } = tileCenter(meditation.q, meditation.r, h);
+  const frac = Math.max(0, Math.min(1, meditation.t / Math.max(0.01, meditation.duration)));
+  const t = now / 1000;
+  const breath = 0.5 + 0.5 * Math.sin(t * 2.4);
+
+  // Blend smoothly from misty cyan-lavender to warm golden-white as the mind clears.
+  const c0 = [150, 215, 240];
+  const c1 = [246, 214, 120];
+  const col = [
+    Math.round(c0[0] + (c1[0] - c0[0]) * frac),
+    Math.round(c0[1] + (c1[1] - c0[1]) * frac),
+    Math.round(c0[2] + (c1[2] - c0[2]) * frac),
+  ];
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.92, 0.92);
+  ctx.translate(-cx, -cy);
+  traceTopFace(ctx, cx, cy);
+  ctx.fillStyle = rgba(col, 0.14 + frac * 0.22 + breath * 0.06);
+  ctx.fill();
+  traceTopFace(ctx, cx, cy);
+  ctx.strokeStyle = rgba(col, 0.45 + frac * 0.4);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  // Concentric breathing ripple rings around the seated figure.
+  ctx.save();
+  ctx.lineWidth = 1;
+  for (const offset of [0, 0.5]) {
+    const p = (t * 0.55 + offset) % 1;
+    ctx.strokeStyle = rgba(col, (1 - p) * (0.4 + frac * 0.35));
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 1, 3 + p * 11, 1.5 + p * 5.2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Slow luminous motes spiralling upward as clarity builds.
+  const count = 5 + Math.round(frac * 5);
+  for (let i = 0; i < count; i++) {
+    const period = 2.0 + (i % 3) * 0.4;
+    const p = ((t + i * 0.43) % period) / period;
+    const ang = t * 1.4 + i * ((Math.PI * 2) / count) + p * 2.2;
+    const r = (1 - p * 0.4) * (5 + (i % 3) * 2.5);
+    const mx = cx + Math.cos(ang) * r;
+    const my = cy - 2 + Math.sin(ang) * r * 0.35 - p * 14;
+    ctx.fillStyle = rgba(col, Math.sin(p * Math.PI) * 0.9);
+    ctx.fillRect(Math.round(mx), Math.round(my), 1, 1);
+  }
+  ctx.restore();
+}
+
 // --------------------------------------------------------------------- pings
 
 /**
@@ -136,9 +196,10 @@ export class Pings {
    * Pings on hexes you cannot see, as entities for the renderer to sort in with
    * the columns, so the mountain in front hides them. `inView(q, r)` says which.
    */
-  entities(map, now, inView) {
-    return this.list.filter(p => !inView(p.q, p.r))
-      .map(p => ({ q: p.q, r: p.r, draw: ctx => this.drawOne(ctx, map, now, p) }));
+  entities() {
+    // Occluded pings are suppressed so their expanding ring does not peek out
+    // around cliffs or mountain peaks standing in front.
+    return [];
   }
 
   /**
@@ -211,16 +272,18 @@ export function loadResourceIcons() {
  * In the eye view, ring the scenic hexes you have explored in their tier's
  * colour. Drawn into the world buffer with the other overlays.
  */
-export function drawScenicRings(ctx, map, state, view) {
+export function drawScenicRings(ctx, map, state, view, inView = () => true) {
   const explored = state.mind?.explored || {};
   for (const [k, tier] of Object.entries(explored)) {
     if (!tier) continue;
     const [q, r] = k.split(',').map(Number);
+    if (!inView(q, r)) continue;
     const h = Math.max(0, map.surfaceAt(q, r));
     const { cx, cy } = tileCenter(q, r, h);
     if (cx < view.left || cx > view.right || cy < view.top || cy > view.bottom) continue;
+    const done = isMeditated(state, q, r);
     traceTopFace(ctx, cx, cy);
-    ctx.strokeStyle = rgba(TIER_COLORS[tier], 0.9);
+    ctx.strokeStyle = done ? rgba(TIER_COLORS[tier], 0.45) : rgba([168, 232, 248], 0.92);
     ctx.lineWidth = 1;
     ctx.stroke();
   }
@@ -230,7 +293,7 @@ export function drawScenicRings(ctx, map, state, view) {
  * The eye view's icons: what each known hex has, glowing softly over it. Drawn
  * on the display canvas after the upscale, so the icons stay sharp.
  */
-export function drawResourceIcons(ctx, camera, map, state, icons, now) {
+export function drawResourceIcons(ctx, camera, map, state, icons, now, inView = () => true) {
   const mind = state.mind;
   if (!mind) return;
   const size = Math.round(camera.scale * 7);
@@ -260,6 +323,7 @@ export function drawResourceIcons(ctx, camera, map, state, icons, now) {
 
   for (const [k, list] of marks) {
     const [q, r] = k.split(',').map(Number);
+    if (!inView(q, r)) continue;
     const h = Math.max(0, map.surfaceAt(q, r));
     const { cx, cy } = tileCenter(q, r, h);
     const p = camera.worldToScreen(cx, cy);

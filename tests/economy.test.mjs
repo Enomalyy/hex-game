@@ -13,7 +13,7 @@ import { ITEMS, RECIPES, SKILL_INFO, ITEM_BASE_PRICES, VILLAGE_KINDS } from '../
 import { HARVESTS } from '../src/game/harvests.js';
 import { createState, isBuilding, MAX_LEVEL } from '../src/game/state.js';
 import { addItem, countItem, removeItem, hasRoomFor, capacity, spend, maxEnergy, topUp } from '../src/game/inventory.js';
-import { checkRecipe, craft } from '../src/game/crafting.js';
+import { checkRecipe, craft, recipeKnown } from '../src/game/crafting.js';
 import { attackDice, defenseDice } from '../src/game/gear.js';
 import { addXp } from '../src/game/skills.js';
 
@@ -202,6 +202,21 @@ test('master smith: a fifth level of metalworking gives an extra ingot', () => {
   const r = craft(s, 'smelt', { at: { q: 0, r: 0 }, distance: () => 0 });
   ok(r.ok, r.reasons?.join(' '));
   eq(countItem(s, 'ingot'), 2, 'two ingots from one smelt');
+});
+
+test('recipes appear once you have held all of their input parts', () => {
+  const s = createState();
+  ok(!recipeKnown(s, RECIPES.cord_reed), 'cord stays hidden until reed is held');
+  ok(!recipeKnown(s, RECIPES.stone_axe), 'stone axe stays hidden until stone, branch, and cord are held');
+
+  addItem(s, 'reed', 1);
+  ok(recipeKnown(s, RECIPES.cord_reed), 'holding a reed reveals cord');
+
+  addItem(s, 'stone', 1);
+  addItem(s, 'branch', 1);
+  ok(!recipeKnown(s, RECIPES.stone_axe), 'still missing cord');
+  addItem(s, 'cord', 1);
+  ok(recipeKnown(s, RECIPES.stone_axe), 'holding stone, branch, and cord reveals stone axe');
 });
 
 run('economy');

@@ -23,6 +23,7 @@ export class Player {
     this.path = [];        // remaining columns, current tile first
     this.leg = null;       // { from, to, t, duration }
     this.facing = 1;       // +1 right, -1 left
+    this.seated = false;   // resting beside the cold campfire at start
     this.animTime = 0;     // accumulated animation clock (seconds)
     this.actionAnim = null;// { kind, start, until }
     this.equipped = null;  // optional { weapon, shield }
@@ -36,6 +37,7 @@ export class Player {
 
   /** Trigger a brief character action animation ('chop' | 'mine' | 'forage' | 'attack' | 'build'). */
   triggerAction(kind, durationSec = 0.55) {
+    this.seated = false;
     this.actionAnim = {
       kind,
       start: this.animTime,
@@ -87,6 +89,7 @@ export class Player {
 
   /** Start walking a route. Pass the array findPath returned. */
   follow(path, onArrive = null) {
+    this.seated = false;
     if (!path || path.length < 2) {
       this.path = [];
       this.leg = null;
@@ -162,6 +165,7 @@ export class Player {
       legT: this.leg ? this.leg.t : 0,
       climbing: this.climbing,
       boat: this.onWater,
+      seated: this.seated && !this.moving && !action,
       action,
       equipped: this.equipped,
     });
@@ -182,6 +186,7 @@ export function drawPawn(ctx, x, y, facing = 1, ghost = false, anim = {}) {
     legT = 0,
     climbing = false,
     boat = false,
+    seated = false,
     action = null,
     equipped = null,
   } = anim;
@@ -191,6 +196,45 @@ export function drawPawn(ctx, x, y, facing = 1, ghost = false, anim = {}) {
   // Water coracle / rowboat mode
   if (boat) {
     drawBoatRider(ctx, x, y, f, t, moving, legT, ghost);
+    return;
+  }
+
+  // Seated by the cold campfire at start
+  if (seated) {
+    const breathe = Math.sin(t * 2.2) > 0.35 ? 1 : 0;
+    const sx = x + 3;
+    const sy = y + 3;
+    if (!ghost) {
+      ctx.fillStyle = 'rgba(20, 16, 30, 0.34)';
+      ctx.fillRect(sx - 5, sy, 12, 2);
+      ctx.fillRect(sx - 4, sy - 1, 10, 1);
+    }
+    // Grounded pack resting beside them
+    px(ctx, INK, sx + 3, sy - 4, 4, 4);
+    px(ctx, '#8f5b32', sx + 4, sy - 3, 2, 2);
+    px(ctx, '#c48d56', sx + 4, sy - 3, 1, 1);
+    // Resting walking staff leaned behind
+    px(ctx, INK, sx - 5, sy - 9, 2, 9);
+    px(ctx, '#8e5a32', sx - 4, sy - 8, 1, 7);
+    // Cloak & torso lowered to sit
+    px(ctx, INK, sx - 4, sy - 6 + breathe, 8, 6);
+    px(ctx, '#6b2835', sx - 3, sy - 5 + breathe, 6, 4);
+    px(ctx, '#963d4c', sx - 3, sy - 5 + breathe, 5, 4);
+    px(ctx, '#bd5968', sx - 3, sy - 5 + breathe, 2, 3);
+    px(ctx, '#e2c26b', sx - 2, sy - 2 + breathe, 4, 1);
+    // Cross-legged boots tucked forward toward the campfire
+    px(ctx, INK, sx - 4, sy - 1, 4, 2);
+    px(ctx, '#6b4228', sx - 3, sy - 1, 2, 1);
+    px(ctx, INK, sx, sy - 1, 3, 2);
+    px(ctx, '#8f5b32', sx + 1, sy - 1, 1, 1);
+    // Hooded head looking toward the cold fire
+    const hy = sy - 10 + breathe;
+    px(ctx, INK, sx - 3, hy, 6, 5);
+    px(ctx, INK, sx - 2, hy - 1, 4, 1);
+    px(ctx, '#963d4c', sx - 2, hy, 4, 2);
+    px(ctx, '#bd5968', sx - 2, hy, 2, 2);
+    px(ctx, '#eccca2', sx - 2, hy + 1, 3, 3);
+    px(ctx, INK, sx - 1, hy + 2, 1, 1);
     return;
   }
 

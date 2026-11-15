@@ -7,7 +7,8 @@ import { SKILL_INFO, SKILLS, MAX_LEVEL } from './state.js';
 export { SKILLS, MAX_LEVEL };
 
 const CURVE = [0, 10, 25, 50, 80];
-export const xpToNext = level => CURVE[level] ?? 999;
+const MIND_CURVE = [0, 16, 38, 72, 115];
+export const xpToNext = (level, skill = '') => (skill === 'mind' ? MIND_CURVE[level] : CURVE[level]) ?? 999;
 
 export const levelOf = (state, skill) => state.skills[skill]?.level ?? 0;
 
@@ -24,8 +25,8 @@ export function addXp(state, skill, xp) {
   if (!s || !xp) return [];
   const gained = [];
   s.xp += xp;
-  while (s.level < MAX_LEVEL && s.xp >= xpToNext(s.level)) {
-    s.xp -= xpToNext(s.level);
+  while (s.level < MAX_LEVEL && s.xp >= xpToNext(s.level, skill)) {
+    s.xp -= xpToNext(s.level, skill);
     s.level++;
     gained.push(s.level);
   }
@@ -37,7 +38,7 @@ export function addXp(state, skill, xp) {
 export function progress(state, skill) {
   const s = state.skills[skill];
   if (!s || s.level >= MAX_LEVEL) return 1;
-  return Math.min(1, s.xp / xpToNext(s.level));
+  return Math.min(1, s.xp / xpToNext(s.level, skill));
 }
 
 /** What this level of a skill lets you do, from SKILL_INFO. */

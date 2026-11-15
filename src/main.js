@@ -10,18 +10,20 @@ import { Renderer } from './render/renderer.js';
 import { Camera, pixelScale } from './core/camera.js';
 import { Rng } from './core/rng.js';
 import { Player } from './game/player.js';
-import { pickHex, pointInHex, tileCenter, traceTopFace, distance, neighbors, GEOM } from './world/hexgrid.js';
+import { pickHex, pointInHex, tileCenter, traceTopFace, distance, neighbors, columnBaseY, GEOM } from './world/hexgrid.js';
 
 import { createState, itemName, RECIPES, ITEMS, dayOf, moonOf, isNight, DAY_LENGTH, hasBuilt } from './game/state.js';
-import { walkOneStep, recomputeEnergy, countItem, removeItem, foodValue } from './game/inventory.js';
-import { craft } from './game/crafting.js';
+import { walkOneStep, recomputeEnergy, countItem, removeItem, foodValue, usedSlots, capacity } from './game/inventory.js';
+import { craft, checkRecipe, recipeKnown } from './game/crafting.js';
 import { ensureVillage, buy, sell, giveFavour, villageContext, isTrusted, isRaided } from './game/economy.js';
-import { determineContext, villageNear } from './game/context.js';
-import { harvest, prospect, build, placementSpots, growCrops, refreshArt, penaltyOnDeath } from './game/actions.js';
+import { villageNear } from './game/context.js';
+import { harvest, shakeTree, prospect, build, relightCampfire, placementSpots, growCrops, refreshArt, penaltyOnDeath } from './game/actions.js';
 import { harvestSpec } from './game/harvests.js';
 import { saveLocal, loadLocal, writeLocal, downloadSave, readSaveFile } from './game/save.js';
-import { ensureMind, isKnown, HIDDEN } from './game/discovery.js';
-import { onStep as mindStep, onExplored, onTrade } from './game/mind.js';
+import { ensureMind, isKnown, isExplored, isMeditated, scenicOf, harvestsHere, HIDDEN } from './game/discovery.js';
+import { nodeNear } from './game/nodes.js';
+import { createFx, drawColumnNodes, drawCampfire, SHAKE_MS } from './render/resources.js';
+import { onStep as mindStep, onExplored, onMeditated, onTrade } from './game/mind.js';
 import { Explorer } from './game/explorer.js';
 import { attackDice, reach, maxHp } from './game/gear.js';
 import { levelOf } from './game/skills.js';
@@ -30,8 +32,8 @@ import {
   updateUnits, garrisonCamps, guardsAt, hostiles, strike, spoils, rally, burnCamp,
   campsLeft, ensureRaidState, raidSize, abroad, KINDS,
 } from './game/raiders.js';
-import { drawExploreCharge, Pings, loadResourceIcons, drawResourceIcons, drawScenicRings } from './render/discovery_fx.js';
-import { chime } from './ui/chime.js';
+import { drawExploreCharge, drawMeditationGlow, Pings, loadResourceIcons, drawResourceIcons, drawScenicRings } from './render/discovery_fx.js';
+import { chime, updateMeditationHum } from './ui/chime.js';
 
 import { UI } from './ui/ui.js';
 import { inventoryPanel } from './ui/panels/inventory.js';
@@ -42,6 +44,29 @@ import { buildPanel } from './ui/panels/build.js';
 import { menuPanel } from './ui/panels/menu.js';
 import { stashPanel } from './ui/panels/stash.js';
 import { messagePanel, HOW_TO_PLAY } from './ui/panels/message.js';
+
+const ITEM_THOUGHTS = {
+  branch: 'A dry branch! With a piece of flint I can relight the cold campfire — or bind two stones and reed cord into a stone axe.',
+  stone: 'Solid stones. With a branch and reed cord, I can lash together a stone axe or a stone hammer.',
+  reed: 'Supple reeds! I can twist these into cord for tools, snares, and ladders, or weave a basket for more pack room.',
+  cord: 'Twisted cord! Now I can bind a stone axe to fell trees, or set a snare where rabbits hop.',
+  berries: 'Sweet wild berries. Carrying food keeps my energy up — and villages often ask for berries as a first favour.',
+  grain: 'Wild grain! Once my Homesteading grows, I can sow a field that reaps fourfold.',
+  log: 'Heavy timber. I can ring stones with logs for a hearth — and once I have a flint knife, whittle logs into planks for a ladder.',
+  stone_axe: "A stone axe! Now I can fell whole trees for logs — though I'll need a flint knife to dress them into planks.",
+  stone_hammer: "A stone hammer! I can dress stone blocks, quarry stone and flint from cliff faces, and chip away ore.",
+  stone_knife: 'A sharp flint knife! Now I can whittle logs into planks to build ladders, and skin hides when I hunt.',
+  plank: 'Smooth wooden planks! With reed cord and Woodworking 3, I can lean a ladder against the high cliffs — or build a workbench.',
+  meat: 'Raw meat will feed me in a pinch, but cooking it at a hearth doubles the energy it gives.',
+  fish: 'Fresh fish will keep me going, and cooking it over a hearth doubles the energy.',
+  hide: 'Tough hide — with my knife I can stitch warm hide armour, a leather pack, or slice extra cord.',
+  clay: 'Wet riverbank clay. Fired at a hearth it makes a pot for stew and healing salve — and later, a forge.',
+  herb: 'Wild medicinal herbs. With clay and a pot, I can mix healing salve or cook rich stew.',
+  herb_seed: 'Rare herb seeds from the tall grass! With two of these and Homesteading 2, I can sow an herb patch of my own.',
+  flint: 'Sharp flint! With a dry branch I can strike a spark to relight the campfire — or knap a flint knife.',
+  ore: "Heavy iron ore! I'll need a stone forge and green-wood tongs to smelt this into ingots.",
+  ingot: 'Fresh iron ingot! At the forge I can smith an iron axe, a pickaxe, or an iron saw.',
+};
 
 /** Seconds between your swings. */
 const PLAYER_COOLDOWN = 1.1;
@@ -65,6 +90,7 @@ async function boot() {
   state.stats ||= {};
   state.trust ||= {};
   state.goals ||= {};
+  state.thoughts ||= {};
   state.stash ||= new Array(16).fill(null);
   if (state.hp == null) state.hp = maxHp(state);
   ensureRaidState(state);
@@ -76,10 +102,12 @@ async function boot() {
   renderer.resize(camera);
 
   const player = new Player(map, restored?.player || map.spawn);
+  if (!restored) player.seated = true;
   const start = player.restingPos;
   camera.centerOn(start.cx, start.cy);
 
   let hover = null;
+  let hoverWorld = null;
   let follow = true;
   let preview = null;
   let placing = null;          // { recipeId, spots }
@@ -92,12 +120,16 @@ async function boot() {
   let saveClock = 0;
   let combatUntil = 0;         // world time; regen pauses while fighting
   let dead = false;
+  const fx = createFx();
   const explorer = new Explorer(map, state);
   const pings = new Pings();
   const resourceIcons = loadResourceIcons();
   const drag = { active: false, x: 0, y: 0, moved: 0 };
+  let knownCraftCount = Object.values(RECIPES).filter(r => r.category !== 'build' && recipeKnown(state, r)).length;
+  let knownBuildCount = Object.values(RECIPES).filter(r => r.category === 'build' && recipeKnown(state, r)).length;
 
   const hasBoat = () => countItem(state, 'boat') > 0 || state.free;
+  const canMine = () => state.free || countItem(state, 'pickaxe') > 0 || countItem(state, 'stone_hammer') > 0;
   const pathOpts = () => ({ boat: hasBoat() });
   const playerPos = () => player.pos;
   const unitAnchor = u => () => unitPos(map, u);
@@ -128,6 +160,7 @@ async function boot() {
       if (/^smelt/.test(recipeId)) state.stats.smelted = (state.stats.smelted || 0) + 1;
       chime('tick', 0.05);
       announceLevels(result.recipe.skill, result.levelsGained);
+      checkItemThoughts(result.produced.map(p => p.id));
       afterChange();
     },
 
@@ -154,13 +187,15 @@ async function boot() {
         if (!ok) return;
         const result = harvest(world, state, player, id, rng);
         if (result.ok) {
+          fx.version++;
           game.ui.floatText(playerPos, result.message, 'gain');
           if (id === 'harvest_field') state.stats.reaped = (state.stats.reaped || 0) + 1;
           announceLevels(spec.skill, result.levels);
+          checkItemThoughts((result.gained || []).map(g => g.id));
           if (result.changed?.length) {
             refreshArt(world, result.changed.filter(c => c.terrain !== 'farm'));
-            rebuildFeatures();
           }
+          rebuildFeatures();
         } else game.ui.notify(result.message);
         afterChange();
       });
@@ -190,6 +225,9 @@ async function boot() {
       if (result.ok) {
         chime('gold');
         const r = onTrade(world, state, col);
+        const now = performance.now();
+        for (const c of r.revealed || []) fx.found.set(`${c.q},${c.r}`, now);
+        fx.version++;
         announceMind(r);
         game.ui.murmur(`${col.feature.name} trusts you.`, { tone: 'good', ms: 5200 });
       }
@@ -199,6 +237,7 @@ async function boot() {
     doBuy(col, itemId) {
       const result = buy(state, col, itemId);
       game.ui.notify(result.message);
+      if (result.ok) checkItemThoughts([itemId]);
       afterChange();
     },
 
@@ -220,6 +259,28 @@ async function boot() {
         game.ui.floatText(playerPos, `+${gold} gold`, 'gain');
         afterChange();
         if (!campsLeft(map).length && !state.won) victory();
+      });
+    },
+
+    doRelight() {
+      const can = state.free || (countItem(state, 'branch') >= 1 && countItem(state, 'flint') >= 1);
+      if (!can) {
+        player.triggerAction('forage', 0.35);
+        const check = relightCampfire(world, state, player);
+        return game.ui.notify(check.message);
+      }
+      game.ui.clearContext();
+      player.triggerAction('forage', 0.9);
+      game.ui.showProgress('Lighting campfire', 900, player).then(ok => {
+        if (!ok) return;
+        const result = relightCampfire(world, state, player);
+        if (!result.ok) return game.ui.notify(result.message);
+        chime('gold');
+        game.ui.floatText(playerPos, '+ Campfire lit', 'gain');
+        game.ui.murmur(result.message, { tone: 'good', ms: 5200 });
+        announceLevels('homesteading', result.levels);
+        rebuildFeatures();
+        afterChange();
       });
     },
 
@@ -262,6 +323,50 @@ async function boot() {
   game.ui = new UI(game);
   game.ui.updateHud();
 
+  function thinkOnce(id, text, ms = 5400) {
+    if (!text) return false;
+    state.thoughts ||= {};
+    if (state.thoughts[id]) return false;
+    state.thoughts[id] = 1;
+    game.ui.murmur(text, { ms });
+    return true;
+  }
+
+  function checkItemThoughts(itemIds = []) {
+    let spoke = false;
+    for (const id of itemIds) {
+      if (ITEM_THOUGHTS[id] && thinkOnce(`item:${id}`, ITEM_THOUGHTS[id])) {
+        spoke = true;
+        break;
+      }
+    }
+    if (!spoke && usedSlots(state) >= capacity(state) - 1 && !countItem(state, 'basket')) {
+      thinkOnce('pack_full', 'My pack is nearly full. Four reeds and two branches would weave a basket for four more slots.');
+    }
+    if (map.spawn && !map.get(map.spawn.q, map.spawn.r)?.feature
+      && countItem(state, 'branch') >= 1 && countItem(state, 'flint') >= 1) {
+      thinkOnce('ready_to_relight', 'I have both a branch and flint! I can return to the cold campfire and relight it.', 6000);
+    }
+  }
+
+  function unreachableHint(col) {
+    if (col && isWater(col.terrain)) {
+      return countItem(state, 'plank') >= 6
+        ? 'Too deep to wade. I can lay a bridge across narrow water from the Build menu.'
+        : 'The water is too deep to wade. If only I had a boat, or enough planks for a bridge...';
+    }
+    if (countItem(state, 'plank') >= 3 && countItem(state, 'cord') >= 2) {
+      if (!state.free && levelOf(state, 'woodworking') < 3) {
+        return 'I have planks and cord for a ladder, but I need Woodworking 3 to lash one together.';
+      }
+      return "Too high to scramble up — I can build a ladder from the Build menu while standing at the cliff's foot.";
+    }
+    if (countItem(state, 'stone_knife') > 0) {
+      return 'If only I had a ladder... With my knife and an axe, I can whittle logs into planks and lash them with cord.';
+    }
+    return "If only I had a ladder... I'll need planks (cut with an axe and knife) and reed cord to build one.";
+  }
+
   function afterChange() {
     const j = checkJourney(state, world);
     for (const g of j.goals) game.ui.ping({ kind: 'goal', title: g.text });
@@ -270,6 +375,12 @@ async function boot() {
       const next = STAGES[i + 1];
       if (next) game.ui.ping({ kind: 'stage', kicker: `Chapter ${i + 2}`, title: next.name, sub: next.blurb });
     }
+    const nowCraft = Object.values(RECIPES).filter(r => r.category !== 'build' && recipeKnown(state, r)).length;
+    const nowBuild = Object.values(RECIPES).filter(r => r.category === 'build' && recipeKnown(state, r)).length;
+    if (nowCraft > knownCraftCount) game.ui.nudge('crafting');
+    if (nowBuild > knownBuildCount) game.ui.nudge('build');
+    knownCraftCount = nowCraft;
+    knownBuildCount = nowBuild;
     game.ui.refreshPanel();
     game.ui.updateHud();
     refreshContext();
@@ -288,11 +399,31 @@ async function boot() {
   function explored(done, now) {
     const result = onExplored(world, state, done);
     if (!result.found) return;
+    fx.found.set(`${done.q},${done.r}`, now);
+    for (const c of result.found.revealed || []) fx.found.set(`${c.q},${c.r}`, now);
+    fx.version++;
     pings.add(done.q, done.r, result.found.tier, now);
     if (!result.found.tier) chime('tick', 0.035);
-    const finds = result.found.resources.map(id => itemName(HIDDEN[id].icon));
-    if (finds.length) game.ui.floatText(playerPos, `found ${finds.join(', ')}`, 'find');
+    const finds = result.found.resources.map(id => (HIDDEN[id].label || itemName(HIDDEN[id].icon)));
+    if (finds.length && inView(done.q, done.r)) game.ui.floatText(playerPos, `found ${finds.join(', ')}`, 'find');
     if (result.found.oreSign) game.ui.notify('Ore glints in the rock near here.');
+    const revealedCount = result.found.revealed?.length || 0;
+    if (revealedCount >= 6) {
+      state.thoughts ||= {};
+      state.thoughts.vista_reached = 1;
+      thinkOnce(`vista:${done.q},${done.r}`, 'From this height, the land below opens up before you.');
+    } else if (revealedCount >= 1 && !state.thoughts?.vista_reached) {
+      thinkOnce('hill_vantage', 'Standing three steps above the ground below lets me see over the edge — climbing a real peak would reveal much more.');
+    }
+    if (result.found.tier > 0) {
+      const tip = thinkOnce('scenic_meditate', 'This looks like a beautiful place to sit down — click yourself to meditate.');
+      if (!tip) game.ui.murmur('This looks like a beautiful place to sit down.', { ms: 4600 });
+    } else if (revealedCount === 0 && !state.thoughts?.vista_reached && Object.keys(state.mind?.explored || {}).length >= 8) {
+      thinkOnce('seek_high_ground', 'If only I could get higher up, I could see all around...');
+    }
+    if (map.spawn && done.q === map.spawn.q && done.r === map.spawn.r && !map.get(done.q, done.r)?.feature) {
+      thinkOnce('cold_campfire', 'The campfire here is cold. If I find a dry branch and a piece of flint, I can strike a spark and relight it.', 5800);
+    }
     announceMind(result);
     afterChange();
   }
@@ -302,6 +433,13 @@ async function boot() {
   function rebuildFeatures() {
     features = [];
     const deck = res.images[BRIDGE_SHEET];
+    const spawn = map.spawn && map.get(map.spawn.q, map.spawn.r);
+    if (spawn && !spawn.feature) {
+      features.push({
+        q: spawn.q, r: spawn.r,
+        draw: (ctx, cx, cy) => drawCampfire(ctx, Math.round(cx) - 5, Math.round(cy) + 3, fx.hover?.kind === 'campfire'),
+      });
+    }
     for (const col of map) {
       const f = col.feature;
       if (!f) continue;
@@ -311,6 +449,16 @@ async function boot() {
         features.push({ q: col.q, r: col.r, draw: (ctx, cx, cy) => drawCamp(ctx, Math.round(cx), Math.round(cy), performance.now() / 1000, f) });
       } else if (f.type === 'structure' && f.item === 'ladder') {
         // Drawn below from map.structures, against the face it climbs.
+      } else if (f.type === 'structure' && f.camp) {
+        features.push({
+          q: col.q, r: col.r,
+          draw: (ctx, cx, cy) => {
+            const x = Math.round(cx) - 5, y = Math.round(cy) + 3;
+            const hot = !placing && !dead && hover?.q === col.q && hover?.r === col.r;
+            drawCampfire(ctx, x, y, hot, true, performance.now() / 1000);
+            if (f.hp < f.maxHp) hpBar(ctx, x, y - 9, f.hp / f.maxHp);
+          },
+        });
       } else if (f.type === 'structure') {
         features.push({ q: col.q, r: col.r, draw: (ctx, cx, cy) => drawStructure(ctx, Math.round(cx), Math.round(cy), f.item, performance.now() / 1000, f) });
       } else if (f.type === 'field' && f.hp < f.maxHp) {
@@ -318,14 +466,18 @@ async function boot() {
       } else if (f.type === 'crossing') {
         features.push({ q: col.q, r: col.r, draw: (ctx, cx, cy) => drawCrossing(ctx, Math.round(cx), Math.round(cy), col.q, col.r, performance.now() / 1000) });
       } else if (f.type === 'ore' && f.known && f.remaining > 0) {
-        features.push({ q: col.q, r: col.r, draw: (ctx, cx, cy) => drawVein(ctx, Math.round(cx), Math.round(cy)) });
+        features.push({
+          q: col.q, r: col.r,
+          draw: (ctx, cx, cy) => drawVein(ctx, Math.round(cx), Math.round(cy),
+            fx.hover?.kind === 'ore' && fx.hover.q === col.q && fx.hover.r === col.r),
+        });
       }
     }
     for (const s of map.structures) {
       if (s.type === 'ladder') {
         const edge = neighbors(s.from.q, s.from.r).findIndex(n => n.q === s.to.q && n.r === s.to.r);
         if (edge < 0) continue;
-        // Heights are read as it is drawn: mining the face shortens the ladder.
+        // Heights are read as it is drawn.
         const centre = c => { const p = tileCenter(c.q, c.r, Math.max(0, map.heightAt(c.q, c.r))); return { x: Math.round(p.cx), y: Math.round(p.cy) }; };
         if (edge === 0 || edge === 1 || edge === 5) {
           // The face is turned towards us: the ladder stands on the foot hex.
@@ -348,7 +500,16 @@ async function boot() {
   }
   rebuildFeatures();
 
-  function drawVein(ctx, x, y) {
+  function drawVein(ctx, x, y, hot = false) {
+    if (hot) {
+      ctx.save();
+      ctx.strokeStyle = '#fff5cf';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(x, y - 1, 7, 5, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.fillStyle = '#1b1420';
     ctx.fillRect(x - 4, y - 4, 9, 6);
     ctx.fillStyle = '#c9a227';
@@ -363,8 +524,12 @@ async function boot() {
     draw: ctx => drawUnit(ctx, map, u, performance.now()),
   }));
 
-  const chargeEntity = now => (explorer.charge
+  const chargeEntity = now => (explorer.charge && inView(explorer.charge.q, explorer.charge.r)
     ? [{ q: explorer.charge.q, r: explorer.charge.r, draw: ctx => drawExploreCharge(ctx, map, explorer.charge, now) }]
+    : []);
+
+  const meditationEntity = now => (explorer.meditation && inView(explorer.meditation.q, explorer.meditation.r)
+    ? [{ q: explorer.meditation.q, r: explorer.meditation.r, draw: ctx => drawMeditationGlow(ctx, map, explorer.meditation, now) }]
     : []);
 
   const dogEntity = () => {
@@ -378,6 +543,7 @@ async function boot() {
 
   const drawOverlays = (ctx) => {
     if (placing) {
+      const footH = Math.max(0, map.heightAt(player.q, player.r));
       for (const spot of placing.spots) {
         const tiles = spot.span ? spot.span.tiles : [spot];
         for (const t of tiles) {
@@ -388,6 +554,18 @@ async function boot() {
           ctx.strokeStyle = 'rgba(217, 180, 91, 0.9)';
           ctx.lineWidth = 1;
           ctx.stroke();
+          if (placing.recipeId === 'ladder' && t.h > footH) {
+            const base = tileCenter(t.q, t.r, footH);
+            ctx.save();
+            ctx.setLineDash([3, 3]);
+            traceTopFace(ctx, base.cx, base.cy);
+            ctx.fillStyle = 'rgba(217, 180, 91, 0.14)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(217, 180, 91, 0.7)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.restore();
+          }
         }
       }
       return;
@@ -397,9 +575,7 @@ async function boot() {
     if (raid && (raid.stage === 'omen' || raid.stage === 'night')) {
       const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
       if (raid.route && raid.route.length > 1) {
-        // A dashed red line from their camp to what they are after, the dashes
-        // marching the way the band will. It has to be legible at a glance
-        // from any zoom: it is the one thing that says where to build.
+        // Subtle ember-red trail showing the band's expected path without cluttering the terrain.
         ctx.save();
         ctx.lineJoin = 'round';
         ctx.lineCap = 'butt';
@@ -408,23 +584,34 @@ async function boot() {
           const { cx, cy } = tileCenter(s.q, s.r, Math.max(0, map.surfaceAt(s.q, s.r)));
           if (i) ctx.lineTo(Math.round(cx), Math.round(cy)); else ctx.moveTo(Math.round(cx), Math.round(cy));
         });
-        ctx.strokeStyle = 'rgba(24, 8, 14, 0.7)';
-        ctx.lineWidth = 4;
-        ctx.stroke();
-        ctx.setLineDash([5, 4]);
-        ctx.lineDashOffset = -(performance.now() / 70) % 9;
-        ctx.strokeStyle = 'rgba(240, 96, 112, 0.95)';
+        ctx.strokeStyle = 'rgba(24, 10, 14, 0.18)';
         ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.setLineDash([3, 5]);
+        ctx.lineDashOffset = -(performance.now() / 140) % 8;
+        ctx.strokeStyle = `rgba(196, 82, 92, ${0.32 + pulse * 0.12})`;
+        ctx.lineWidth = 1;
         ctx.stroke();
         ctx.restore();
       }
       if (raid.target) {
         const { cx, cy } = tileCenter(raid.target.q, raid.target.r, Math.max(0, map.surfaceAt(raid.target.q, raid.target.r)));
         traceTopFace(ctx, cx, cy);
-        ctx.fillStyle = `rgba(209, 89, 109, ${0.12 + pulse * 0.14})`;
+        ctx.fillStyle = `rgba(196, 82, 92, ${0.06 + pulse * 0.05})`;
         ctx.fill();
-        ctx.strokeStyle = `rgba(240, 96, 112, ${0.6 + pulse * 0.4})`;
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = `rgba(210, 90, 102, ${0.28 + pulse * 0.16})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+    // Hovered tree, ripe field, or tall grass gets a soft pale rim on its hex.
+    if (fx.hover && (fx.hover.kind === 'tree' || fx.hover.kind === 'field' || fx.hover.kind === 'grain')) {
+      const col = map.get(fx.hover.q, fx.hover.r);
+      if (col) {
+        const { cx, cy } = tileCenter(col.q, col.r, Math.max(0, col.h));
+        traceTopFace(ctx, cx, cy);
+        ctx.strokeStyle = 'rgba(255, 248, 220, 0.55)';
+        ctx.lineWidth = 1;
         ctx.stroke();
       }
     }
@@ -482,15 +669,7 @@ async function boot() {
   // --------------------------------------------------------------- context
 
   function refreshContext() {
-    if (player.moving || placing || dead) return game.ui.clearContext();
-    const ctx = determineContext(world, state, player, { guardsLeft: c => guardsAt(state, c) });
-    game.ui.setContext(ctx.offers, player, offer => {
-      if (offer.kind === 'harvest') game.doHarvest(offer.id);
-      else if (offer.kind === 'prospect') game.doProspect();
-      else if (offer.kind === 'trade') game.doTrade(offer.village);
-      else if (offer.kind === 'stash') game.ui.openPanel('stash');
-      else if (offer.kind === 'burn') game.doBurn(offer.camp);
-    });
+    game.ui.clearContext();
   }
 
   player.speedAt = (from, to) => {
@@ -507,8 +686,24 @@ async function boot() {
     const step = walkOneStep(state, { cartOnRoad: col?.terrain === 'path' && countItem(state, 'cart') > 0 });
     if (step.exhausted && state.stepsWalked % 10 === 0) game.ui.notify('You are starving.', 3600, 'bad');
     if (col && (isWater(col.terrain) || isBridged(map, player)) && !state.stats.crossed) state.stats.crossed = 1;
-    announceMind(mindStep(world, state, player));
+    const mindRes = mindStep(world, state, player);
+    if (mindRes.revealed?.length) {
+      const now = performance.now();
+      for (const c of mindRes.revealed) fx.found.set(`${c.q},${c.r}`, now);
+      fx.version++;
+    }
+    announceMind(mindRes);
+    if (mindRes.moments.some(m => m.kind === 'village')) {
+      thinkOnce('first_village', 'A village! Doing their favour earns gold and opens their market — a good place to buy a flint knife.');
+    }
+    if (col && scenicOf(map, col).tier > 0 && isExplored(state, col.q, col.r) && !isMeditated(state, col.q, col.r)) {
+      const tip = thinkOnce('scenic_meditate', 'This looks like a beautiful place to sit down — click yourself to meditate.');
+      if (!tip) game.ui.murmur('This looks like a beautiful place to sit down.', { ms: 4600 });
+    }
     maybeRally();
+    if (map.spawn && !map.get(map.spawn.q, map.spawn.r)?.feature) {
+      thinkOnce('cold_campfire', 'The campfire here is cold. If I find a dry branch and a piece of flint, I can strike a spark and relight it.', 5800);
+    }
     afterChangeLight();
   };
 
@@ -653,13 +848,12 @@ async function boot() {
     }
     if (state.hp <= 0) return die();
     if (state.hp >= max) { regen = 0; return; }
-    const near = item => state.built.some(b => b.item === item && distance(b.q, b.r, player.q, player.r) <= (item === 'shrine' ? 2 : 1));
-    const home = near('hearth') || near('hut') || near('shrine');
+    // Damage is serious: food never heals, only salve heals actively, and passive
+    // recovery is slow (1 hp per day out of combat).
     const fighting = state.time < combatUntil;
-    if (fighting && !near('shrine')) return;
+    if (fighting) return;
     regen += dt;
-    const every = home ? 1.2 : (state.energy > 0 ? 6 : Infinity);
-    if (regen >= every) { regen = 0; state.hp = Math.min(max, state.hp + 1); }
+    if (regen >= DAY_LENGTH) { regen = 0; state.hp = Math.min(max, state.hp + 1); }
   }
 
   function homeHex() {
@@ -747,17 +941,195 @@ async function boot() {
    */
   const spotAt = e => {
     const w = worldAt(e);
+    const footH = Math.max(0, map.heightAt(player.q, player.r));
     let best = null;
     for (const spot of placing?.spots || []) {
       for (const t of spot.span ? spot.span.tiles : [spot]) {
         const { cx, cy } = tileCenter(t.q, t.r, spotHeight(spot, t));
-        if (!pointInHex(w.x, w.y, cx, cy)) continue;
-        const d = Math.hypot(w.x - cx, w.y - cy);
-        if (!best || d < best.d) best = { spot, d };
+        const inTop = pointInHex(w.x, w.y, cx, cy);
+        const footCy = !spot.span && t.h > footH ? tileCenter(t.q, t.r, footH).cy : cy;
+        const onFace = !inTop && !spot.span && t.h > footH
+          && Math.abs(w.x - cx) <= GEOM.frameWidth / 2
+          && w.y >= cy - GEOM.topFaceHeight / 2
+          && w.y <= footCy + GEOM.topFaceHeight / 2;
+        if (!inTop && !onFace) continue;
+        // Prefer exact top-face hits first; on cliff walls prefer front-most columns.
+        const tier = inTop ? 0 : 1;
+        const front = -columnBaseY(t.q, t.r);
+        const d = inTop ? Math.hypot(w.x - cx, w.y - cy) : Math.abs(w.x - cx);
+        if (!best || tier < best.tier
+          || (tier === best.tier && (front < best.front || (front === best.front && d < best.d)))) {
+          best = { spot, tier, front, d };
+        }
       }
     }
     return best?.spot || null;
   };
+
+  const hitNodeAt = (e, hex) => {
+    if (!hex) return null;
+    const w = worldAt(e);
+    const col = map.get(hex.q, hex.r);
+    if (col) {
+      const { cx, cy } = tileCenter(col.q, col.r, col.h);
+      const direct = nodeNear(map, state, col, w.x - cx, w.y - cy, performance.now() / 1000);
+      if (direct && (direct.kind === 'tree' || direct.kind === 'field' || isKnown(state, direct.q, direct.r))) {
+        return direct;
+      }
+      if (col.feature?.type === 'ore' && col.feature.known && col.feature.remaining > 0) {
+        if (Math.hypot(w.x - cx, w.y - (cy - 1)) <= 8) {
+          return { kind: 'ore', harvest: 'mine_ore', q: col.q, r: col.r, dx: 0, dy: -1, ready: true };
+        }
+      }
+    }
+    for (const nb of neighbors(hex.q, hex.r)) {
+      const ncol = map.get(nb.q, nb.r);
+      if (ncol?.feature?.type !== 'trees' || !(ncol.feature.remaining > 0)) continue;
+      if (Math.abs(ncol.h - (col?.h ?? 0)) > 1) continue;
+      const nc = tileCenter(ncol.q, ncol.r, ncol.h);
+      if (Math.hypot(w.x - nc.cx, w.y - (nc.cy - 10)) <= 13) {
+        return { kind: 'tree', harvest: 'fell_tree', q: ncol.q, r: ncol.r, dx: 0, dy: -6, ready: true, variant: 0 };
+      }
+    }
+    if (map.spawn && hex.q === map.spawn.q && hex.r === map.spawn.r) {
+      const spawnCol = map.get(map.spawn.q, map.spawn.r);
+      if (spawnCol && !spawnCol.feature) {
+        const { cx, cy } = tileCenter(spawnCol.q, spawnCol.r, spawnCol.h);
+        if (Math.hypot(w.x - (cx - 5), w.y - (cy + 3)) <= 11) {
+          return { kind: 'campfire', q: spawnCol.q, r: spawnCol.r, dx: -5, dy: 3, ready: true };
+        }
+      }
+    }
+    return null;
+  };
+
+  /** Vertical exposed wall of a steep hex (two or more steps above a land neighbour). */
+  function cliffInfoAt(w, hex) {
+    if (!w || !hex) return null;
+    const face = map.get(hex.q, hex.r);
+    if (!face || isWater(face.terrain)) return null;
+    const { cx, cy } = tileCenter(face.q, face.r, Math.max(0, face.h));
+    if (pointInHex(w.x, w.y, cx, cy) || w.y <= cy) return null;
+    const feet = neighbors(face.q, face.r)
+      .map(n => map.get(n.q, n.r))
+      .filter(f => f && !isWater(f.terrain) && face.h - f.h >= 2)
+      .sort((a, b) => distance(a.q, a.r, player.q, player.r) - distance(b.q, b.r, player.q, player.r));
+    return feet.length ? { face, feet } : null;
+  }
+
+  function walkToAndDo(col, maxDist, fn) {
+    if (!col) return false;
+    if (distance(player.q, player.r, col.q, col.r) <= maxDist) {
+      fn();
+      return true;
+    }
+    let route = findPath(map, player, col, pathOpts());
+    if (!route && maxDist >= 1) {
+      const around = neighbors(col.q, col.r).map(n => map.get(n.q, n.r)).filter(Boolean)
+        .sort((a, b) => distance(a.q, a.r, player.q, player.r) - distance(b.q, b.r, player.q, player.r));
+      for (const c of around) {
+        route = findPath(map, player, c, pathOpts());
+        if (route) break;
+      }
+    }
+    if (!route) {
+      game.ui.notify(unreachableHint(col));
+      return true;
+    }
+    follow = true;
+    preview = null;
+    game.ui.clearContext();
+    player.follow(route, () => {
+      refreshContext();
+      if (distance(player.q, player.r, col.q, col.r) <= maxDist) fn();
+    });
+    return true;
+  }
+
+  function interactCliff(info) {
+    if (!canMine()) {
+      game.ui.notify('If I had the right tool, I might be able to mine that...');
+      return;
+    }
+    const runAtFoot = () => {
+      const entry = harvestsHere(map, state, player).find(h => h.spec.id === 'mine_cliff');
+      if (entry?.ok) game.doHarvest('mine_cliff');
+      else game.ui.notify(entry?.reasons?.[0] || 'No cliff to mine from here.');
+    };
+    if (info.feet.some(f => f.q === player.q && f.r === player.r)) {
+      runAtFoot();
+      return;
+    }
+    for (const foot of info.feet) {
+      const route = findPath(map, player, foot, pathOpts());
+      if (route) {
+        follow = true;
+        preview = null;
+        game.ui.clearContext();
+        player.follow(route, () => {
+          refreshContext();
+          if (info.feet.some(f => f.q === player.q && f.r === player.r)) runAtFoot();
+        });
+        return;
+      }
+    }
+    game.ui.notify(unreachableHint(info.feet[0] || info.face));
+  }
+
+  function workNode(node) {
+    if (node.kind === 'campfire') {
+      game.doRelight();
+      return;
+    }
+    if (node.kind === 'ore') {
+      const entry = harvestsHere(map, state, player).find(h => h.spec.id === 'mine_ore');
+      if (!entry || !entry.ok) {
+        player.triggerAction('mine', 0.35);
+        game.ui.notify(canMine()
+          ? (entry?.reasons?.[0] || 'Cannot mine that vein right now.')
+          : 'If I had a stone hammer or pickaxe, I might be able to mine that ore vein...');
+        return;
+      }
+      game.doHarvest('mine_ore');
+      return;
+    }
+    if (node.kind === 'bee') {
+      state.taken ||= {};
+      state.taken[`${node.q},${node.r}:bee`] = 1;
+      fx.version++;
+      player.triggerAction('forage', 0.35);
+      chime('tick', 0.05);
+      state.hp = Math.max(0, state.hp - 1);
+      game.ui.floatText(playerPos, '-1 bee sting!', 'bad');
+      game.ui.murmur('Ouch! The meadow bee stung you and buzzed off.', { ms: 4200 });
+      if (state.hp <= 0) { die(); return; }
+      afterChange();
+      return;
+    }
+    if (node.kind === 'tree' && !state.free && countItem(state, 'stone_axe') === 0 && countItem(state, 'iron_axe') === 0) {
+      fx.shake.set(`${node.q},${node.r}`, performance.now());
+      player.facing = node.dx >= 0 ? 1 : -1;
+      player.triggerAction('chop', SHAKE_MS / 1000);
+      chime('tick', 0.04);
+      const res = shakeTree(world, state, { q: node.q, r: node.r });
+      if (res.gained?.length) {
+        game.ui.floatText(playerPos, '+ 1 Branch', 'gain');
+        checkItemThoughts(res.gained.map(g => g.id));
+        game.ui.notify('A branch shakes loose — you need an axe to fell the tree.');
+      } else {
+        game.ui.notify('Nothing else shakes loose. You need an axe to fell the tree.');
+      }
+      afterChange();
+      return;
+    }
+    const entry = harvestsHere(map, state, player).find(h => h.spec.id === node.harvest);
+    if (!entry || !entry.ok) {
+      player.triggerAction('forage', 0.35);
+      game.ui.notify(entry?.reasons?.[0] || 'Nothing left here right now.');
+      return;
+    }
+    game.doHarvest(node.harvest);
+  }
 
   canvas.addEventListener('pointerdown', e => {
     drag.active = true;
@@ -782,6 +1154,21 @@ async function boot() {
     const hit = hexAt(e);
     const moved = !hit !== !hover || (hit && hover && (hit.q !== hover.q || hit.r !== hover.r));
     hover = hit;
+    hoverWorld = hit ? worldAt(e) : null;
+    fx.hover = (!placing && !dead && hit) ? hitNodeAt(e, hit) : null;
+    const hoverCol = hit && map.get(hit.q, hit.r);
+    const interactive = !placing && !dead && hit && (
+      !!fx.hover
+      || (hoverCol?.feature?.type === 'village')
+      || (hoverCol?.feature?.type === 'structure' && ['hut', 'hearth', 'workbench', 'forge'].includes(hoverCol.feature.item))
+      || (hoverCol?.feature?.type === 'camp' && !hoverCol.feature.burned && !guardsAt(state, hoverCol))
+      || !!cliffInfoAt(hoverWorld, hit)
+      || (!player.moving && hit.q === player.q && hit.r === player.r && (
+        (scenicOf(map, hoverCol).tier > 0 && isExplored(state, player.q, player.r) && !isMeditated(state, player.q, player.r))
+        || (['stony', 'steppes'].includes(hoverCol?.terrain) && (levelOf(state, 'mind') >= 3 || state.free))
+      ))
+    );
+    canvas.style.cursor = interactive ? 'pointer' : '';
     if (moved && !placing) preview = hover && !player.moving ? findPath(map, player, hover, pathOpts()) : null;
   });
 
@@ -791,14 +1178,15 @@ async function boot() {
     drag.active = false;
     if (wasDrag || dead) return;
 
-    const target = (placing && spotAt(e)) || hexAt(e);
+    const chosen = placing ? spotAt(e) : null;
+    const target = chosen || hexAt(e);
     if (!target) return;
 
     if (placing) {
       // A click anywhere but a highlight puts the thing away again. The lit
       // hexes are the whole instruction; there is no other mode to explain.
-      if (!spotAt(e)) { placing = null; refreshContext(); return; }
-      const result = build(world, state, player, placing.recipeId, target, game.craftingContext());
+      if (!chosen) { placing = null; refreshContext(); return; }
+      const result = build(world, state, player, placing.recipeId, chosen, game.craftingContext());
       if (!result.ok) game.ui.notify(result.message);
       if (result.ok) {
         player.triggerAction('build', 0.45);
@@ -820,14 +1208,106 @@ async function boot() {
       const beside = neighbors(foe.q, foe.r).map(n => map.get(n.q, n.r)).filter(Boolean)
         .sort((a, b) => distance(a.q, a.r, player.q, player.r) - distance(b.q, b.r, player.q, player.r));
       goal = beside.find(c => findPath(map, player, c, pathOpts())) || target;
+    } else {
+      const clickWorld = worldAt(e);
+      const clickPos = player.pos;
+      const onPlayerBody = !player.moving
+        && target.q === player.q && target.r === player.r
+        && Math.hypot(clickWorld.x - clickPos.x, clickWorld.y - (clickPos.y - 7)) <= 9;
+      const node = hitNodeAt(e, target);
+      const clickedCol = map.get(target.q, target.r);
+      const structureAction = clickedCol?.feature?.type === 'structure'
+        ? (clickedCol.feature.item === 'hut' ? () => game.ui.openPanel('stash')
+          : ['hearth', 'workbench', 'forge'].includes(clickedCol.feature.item) ? () => game.ui.openPanel('crafting')
+            : null)
+        : null;
+
+      // Clicking your own figure sits/stands or meditates on scenic ground.
+      if (target.q === player.q && target.r === player.r && onPlayerBody) {
+        const here = map.get(player.q, player.r);
+        const sc = scenicOf(map, here);
+        if (sc.tier > 0 && isExplored(state, player.q, player.r)) {
+          player.stop();
+          player.seated = true;
+          follow = true;
+          preview = null;
+          if (!isMeditated(state, player.q, player.r)) {
+            explorer.startMeditation(player.q, player.r);
+            game.ui.murmur('You sit down and quiet your thoughts...', { ms: 3400 });
+          } else {
+            game.ui.murmur('You sit awhile and take in the view.', { ms: 3000 });
+          }
+          refreshContext();
+          return;
+        }
+        if (!player.moving) {
+          player.seated = !player.seated;
+          refreshContext();
+          return;
+        }
+      }
+
+      // Clicking a visible resource node, cold campfire, or ore vein works it.
+      if (node && (!onPlayerBody || target.q !== player.q || target.r !== player.r)) {
+        const workCol = map.get(node.q, node.r);
+        const maxDist = (node.kind === 'campfire' || node.kind === 'ore') ? 1 : 0;
+        walkToAndDo(workCol, maxDist, () => workNode(node));
+        return;
+      }
+
+      // Clicking a village, interactive station/hut, or unburned raider camp acts on arrival.
+      if (clickedCol?.feature?.type === 'village') {
+        walkToAndDo(clickedCol, 1, () => game.doTrade(clickedCol));
+        return;
+      }
+      if (structureAction) {
+        walkToAndDo(clickedCol, 1, structureAction);
+        return;
+      }
+      if (clickedCol?.feature?.type === 'camp' && !clickedCol.feature.burned) {
+        walkToAndDo(clickedCol, 1, () => game.doBurn(clickedCol));
+        return;
+      }
+
+      // Clicking bare ground underfoot: scenic meditation, or Mind >= 3 prospecting on stony/steppes.
+      if (target.q === player.q && target.r === player.r && !player.moving) {
+        const here = map.get(player.q, player.r);
+        const sc = scenicOf(map, here);
+        if (sc.tier > 0 && isExplored(state, player.q, player.r) && !isMeditated(state, player.q, player.r)) {
+          player.stop();
+          player.seated = true;
+          follow = true;
+          preview = null;
+          explorer.startMeditation(player.q, player.r);
+          game.ui.murmur('You sit down and quiet your thoughts...', { ms: 3400 });
+          refreshContext();
+          return;
+        }
+        if (['stony', 'steppes'].includes(here?.terrain) && (levelOf(state, 'mind') >= 3 || state.free)) {
+          game.doProspect();
+          return;
+        }
+        if (sc.tier > 0 && isExplored(state, player.q, player.r)) {
+          player.stop();
+          player.seated = true;
+          follow = true;
+          preview = null;
+          game.ui.murmur('You sit awhile and take in the view.', { ms: 3000 });
+          refreshContext();
+          return;
+        }
+      }
+
+      // Clicking a steep cliff wall hints for a tool or walks to mine it.
+      const cliff = cliffInfoAt(clickWorld, target);
+      if (cliff) {
+        interactCliff(cliff);
+        return;
+      }
     }
 
     const route = findPath(map, player, goal, pathOpts());
-    if (!route) {
-      const col = map.get(target.q, target.r);
-      return game.ui.notify(col && isWater(col.terrain) ? 'You need a boat or a bridge to cross water.'
-        : 'No way up. Mine the face, or build a ladder.');
-    }
+    if (!route) return game.ui.notify(unreachableHint(map.get(target.q, target.r)));
     follow = true;
     preview = null;
     game.ui.clearContext();
@@ -901,6 +1381,23 @@ async function boot() {
     const done = explorer.update(dt, player, running && !placing && !game.ui.busy);
     if (done) explored(done, now);
 
+    const medDone = running ? explorer.updateMeditation(dt, player, !placing && !game.ui.busy) : null;
+    updateMeditationHum(
+      running && !!explorer.meditation,
+      explorer.meditation ? explorer.meditation.t / explorer.meditation.duration : 0,
+    );
+    if (medDone) {
+      const res = onMeditated(world, state, medDone);
+      if (res.meditated) {
+        pings.add(medDone.q, medDone.r, medDone.tier, now);
+        chime('meditate', 0.07);
+        if (res.meditated.xp) game.ui.floatText(playerPos, `+${res.meditated.xp} Mind`, 'gain');
+        game.ui.murmur('Your mind clears, and the land feels sharper.', { tone: 'good', ms: 4500 });
+        announceLevels('mind', res.levels);
+        afterChange();
+      }
+    }
+
     if (follow) {
       const p = player.pos;
       camera.moveTo(p.x, p.y);
@@ -913,11 +1410,11 @@ async function boot() {
       // that hex and hidden by whatever hides the hex. As an overlay it was
       // painted over everything: stand behind a peak and the ring ran round the
       // mountain's face, as if that were what you were exploring.
-      entities: [...features, ...chargeEntity(now), ...pings.entities(map, now, inView), ...unitEntities(), ...dogEntity(), player],
+      entities: [...features, ...chargeEntity(now), ...meditationEntity(now), ...pings.entities(map, now, inView), ...unitEntities(), ...dogEntity(), player],
       overlays: [
         drawOverlays,
         ctx => pings.draw(ctx, map, now, inView),
-        ...(eye ? [(ctx, cam) => drawScenicRings(ctx, map, state, cam.viewBounds(32))] : []),
+        ...(eye ? [(ctx, cam) => drawScenicRings(ctx, map, state, cam.viewBounds(32), inView)] : []),
         // You, and anyone else, faintly through whatever stands in front. Over
         // a figure in plain view this repaints its own pixels and changes
         // nothing; behind a cliff or a wood it is how you find them again.
@@ -931,10 +1428,18 @@ async function boot() {
       ],
       screenOverlays: [
         nightShade,
-        ...(eye ? [(ctx, cam) => drawResourceIcons(ctx, cam, map, state, resourceIcons, now)] : []),
+        ...(eye ? [(ctx, cam) => drawResourceIcons(ctx, cam, map, state, resourceIcons, now, inView)] : []),
         edgeArrows,
       ],
-      dim: eye ? col => !isKnown(state, col.q, col.r) : null,
+      dim: col => eye ? (!isKnown(state, col.q, col.r) ? 'dim' : '') : (!isKnown(state, col.q, col.r) ? 'dormant' : ''),
+      sway: col => {
+        const t0 = fx.shake.get(`${col.q},${col.r}`);
+        if (t0 == null) return 0;
+        const elapsed = now - t0;
+        if (elapsed >= SHAKE_MS) { fx.shake.delete(`${col.q},${col.r}`); return 0; }
+        return Math.round(Math.sin(elapsed / 35) * 2 * (1 - elapsed / SHAKE_MS));
+      },
+      props: (ctx, col, mode) => drawColumnNodes(ctx, res, map, state, col, now, fx, mode),
     });
 
     game.ui.positionAnchors(camera, map, pixelScale());
@@ -945,12 +1450,19 @@ async function boot() {
       if (col) {
         const f = col.feature;
         const foe = hostiles(state).find(u => u.q === col.q && u.r === col.r);
+        const structureHint = f?.type === 'structure'
+          ? ({ hut: 'click for stash', hearth: 'click to craft & cook', workbench: 'click to craft', forge: 'click to smelt' }[f.item] || '')
+          : '';
         label = foe ? `${KINDS[foe.kind].name.toLowerCase()} · ${foe.hp}/${foe.maxHp} · ${KINDS[foe.kind].atk} attack, ${KINDS[foe.kind].def} defence`
-          : f?.type === 'village' ? `${f.name}, ${f.kind}${isTrusted(state, col.q, col.r) ? ' · trusts you' : ''}`
-            : f?.type === 'camp' ? `${f.name}${f.burned ? ', burned' : ` · ${guardsAt(state, col)} guards`}`
-              : f?.type === 'structure' ? `${f.name}${f.maxHp ? ` ${f.hp}/${f.maxHp}` : ''}`
-                : f?.type === 'crossing' ? 'a raiders’ crossing'
-                  : '';
+          : fx.hover?.kind === 'ore' ? `ore vein · ${canMine() ? 'click to mine' : 'needs hammer or pickaxe'}`
+            : cliffInfoAt(hoverWorld, hover) ? `cliff face · ${canMine() ? 'click to mine stone & flint' : 'needs hammer or pickaxe'}`
+              : f?.type === 'village' ? `${f.name}, ${f.kind}${isTrusted(state, col.q, col.r) ? ' · trusts you' : ''}`
+                : f?.type === 'camp' ? `${f.name}${f.burned ? ', burned' : guardsAt(state, col) ? ` · ${guardsAt(state, col)} guards` : ' · click to burn'}`
+                  : f?.type === 'structure' ? `${f.name}${f.maxHp ? ` ${f.hp}/${f.maxHp}` : ''}${structureHint ? ` · ${structureHint}` : ''}`
+                    : f?.type === 'crossing' ? 'a raiders’ crossing'
+                      : (!f && map.spawn && col.q === map.spawn.q && col.r === map.spawn.r) ? 'cold campfire · relight with branch & flint'
+                        : (!f && !fx.hover && hover.q === player.q && hover.r === player.r && ['stony', 'steppes'].includes(col.terrain) && (levelOf(state, 'mind') >= 3 || state.free)) ? 'stony ground · click to prospect for ore'
+                          : '';
       }
       if (hudTerrain.textContent !== label) hudTerrain.textContent = label;
     }
@@ -967,10 +1479,6 @@ async function boot() {
   announceMind(mindStep(world, state, player));
   checkJourney(state, world);
   game.ui.updateHud();
-  // The opening is the first chapter's name and nothing else. How to play is
-  // under the cog for whoever wants it; the corner gives the first hint itself
-  // after a few seconds of standing there.
-  if (!restored) game.ui.showCard(STAGES[0].name, STAGES[0].blurb);
 
   // There is one save slot, and every open tab writes to it. `?nosave=1` keeps
   // a tab opened to test something from overwriting the game you are playing.

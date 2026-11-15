@@ -21,7 +21,7 @@ export const STAGES = [
       { id: 'explore5', text: 'Explore 5 places', hint: 'Stand still on a hex for a moment to explore it.', test: s => Object.keys(s.mind?.explored || {}).length >= 5 },
       { id: 'cord', text: 'Twist some cord', hint: 'Reeds grow where a shore is low: a lake, or a stream. Then Craft → Woodworking.', test: s => has(s, 'cord') || has(s, 'stone_axe') || has(s, 'stone_hammer') },
       { id: 'axe', text: 'Make a stone axe', hint: 'Stone + branch + cord. Stone lies under any rise.', test: s => anyOf(s, ['stone_axe', 'iron_axe']) },
-      { id: 'hearth', text: 'Build a hearth', hint: 'Fell trees for logs, then Build → Hearth.', test: s => hasBuilt(s, 'hearth') },
+      { id: 'hearth', text: 'Relight the campfire', hint: 'Bring a branch and a flint to your cold campfire, or build a hearth from stone and logs.', test: s => hasBuilt(s, 'hearth') },
     ],
   },
   {

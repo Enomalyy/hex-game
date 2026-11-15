@@ -148,26 +148,18 @@ export class UI {
         chime('village');
         break;
       case 'goal':
-        // The corner strikes the line through; that is the announcement.
         chime('achievement', 0.03);
         break;
       case 'trade':
-        // Said already, by whoever handed the favour over.
         break;
       case 'achievement':
-        this.murmur(m.title, { tone: 'deed', ms: 5200 });
-        chime('achievement', 0.04);
-        break;
       case 'level':
-        this.murmur(m.title.toLowerCase(), { tone: 'level', ms: 5200 });
         chime('achievement', 0.04);
         break;
       case 'stage':
-        this.showCard(m.title, m.sub);
         chime('gold');
         break;
       case 'raid':
-        this.murmur([m.title, m.sub].filter(Boolean).join('. ').replace(/\.\./g, '.'), { tone: 'bad', ms: 9000 });
         chime('raid');
         break;
       case 'victory':
@@ -274,49 +266,9 @@ export class UI {
     this.updateJourney();
   }
 
-  /**
-   * The top-right corner: the one thing you are reaching for. One line. Point
-   * at it for the chapter and the rest of its goals, each with how. Left alone
-   * it gives the how by itself only if you have been on the same goal a while.
-   */
+  /** Keep the top-right corner clear so the world itself leads the player. */
   updateJourney() {
-    if (!this.journey) return;
-    const s = this.game.state;
-    const { stage, index, done } = currentStage(s);
-    const next = stage.goals.find(g => !s.goals?.[g.id]) || null;
-    const now = performance.now();
-
-    if ((next?.id ?? null) !== this.goal.id) {
-      // The old line is struck through and let go before the new one settles.
-      if (this.goal.id && this.goal.text) { this.goal.done = this.goal.text; this.goal.doneAt = now; }
-      this.goal.id = next?.id ?? null;
-      this.goal.text = next?.text ?? '';
-      this.goal.since = now;
-    }
-    const struck = this.goal.done && now - this.goal.doneAt < 2400 ? this.goal.done : null;
-    const first = index === 0 && next === stage.goals[0];
-    const waited = (now - this.goal.since) / 1000;
-    const stuck = !!next && waited > (first ? FIRST_HINT_AFTER : HINT_AFTER);
-    const fresh = waited < 14;
-
-    const rest = stage.goals.map(g => {
-      const met = !!s.goals?.[g.id];
-      return `<li class="${met ? 'met' : g === next ? 'now' : ''}"><span>${escapeHtml(g.text)}</span>${met ? '' : `<small>${escapeHtml(g.hint)}</small>`}</li>`;
-    }).join('');
-
-    const html = `
-      ${struck ? `<div class="goal-done">${escapeHtml(struck)}</div>` : ''}
-      <div class="goal-now">${done ? 'The vale is free.' : escapeHtml(next?.text || '')}</div>
-      ${next ? `<div class="goal-hint">${escapeHtml(next.hint)}</div>` : ''}
-      <div class="goal-more"><div class="chapter">${escapeHtml(stage.name)} <span>&middot; ${index + 1} of ${STAGES.length}</span></div><ul>${rest}</ul></div>`;
-    // Only touched when it changes: this runs four times a second, and
-    // rewriting it would restart the fade on a line that is trying to fade.
-    const sig = `${html}|${stuck}|${fresh}`;
-    if (sig === this.journeySig) return;
-    this.journeySig = sig;
-    this.journey.innerHTML = html;
-    this.journey.classList.toggle('stuck', stuck);
-    this.journey.classList.toggle('fresh', fresh);
+    if (this.journey) this.journey.innerHTML = '';
   }
 
   // ---------------------------------------------------------- on the world

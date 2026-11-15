@@ -35,13 +35,19 @@ const OPEN = new Set(['meadow', 'grass', 'steppes']);
 
 /** How many rocks lie on a kind of ground: the chance of any, and the most. */
 const ROCKS = {
-  stony: [0.55, 3], steppes: [0.4, 2], meadow: [0.5, 2], grass: [0.14, 1],
-  forest_floor: [0.12, 1], pine_floor: [0.12, 1], oak_wood: [0.08, 1], pine_wood: [0.08, 1],
+  stony:        [0.38, 2],
+  steppes:      [0.22, 1],
+  meadow:       [0.16, 1],
+  grass:        [0.08, 1],
+  forest_floor: [0.07, 1],
+  pine_floor:   [0.07, 1],
+  oak_wood:     [0.05, 1],
+  pine_wood:    [0.05, 1],
 };
 
 /** Every hex this close to where you wake has a fair chance of a rock: an axe needs two. */
 const HOME_RADIUS = 4;
-const HOME_ROCKS = 0.45;
+const HOME_ROCKS = 0.35;
 
 /** How long an animal is in one place, in world seconds. */
 const GAME_STAYS = 90;
@@ -65,6 +71,7 @@ const roll = (map, q, r, tag) => hash2(q, r, seedSalt(map) ^ tagSalt(tag)) / 429
 
 const key = (q, r) => `${q},${r}`;
 const isWaterCol = c => !!c && !!TERRAIN[c.terrain]?.water;
+const isSpawn = (map, col) => !!map.spawn && col.q === map.spawn.q && col.r === map.spawn.r;
 
 // ------------------------------------------------------------- what is where
 
@@ -74,21 +81,32 @@ export function rocksOn(map, col) {
   if (!table) return 0;
   let [chance, most] = table;
   const home = map.spawn ? distance(col.q, col.r, map.spawn.q, map.spawn.r) : Infinity;
-  if (home === 0) chance = 1;
+  if (home === 0) return 0;
   else if (home >= 1 && home <= HOME_RADIUS) chance = Math.max(chance, HOME_ROCKS);
+  if (col.h >= 8 && (col.terrain === 'stony' || col.terrain === 'steppes')) {
+    chance = Math.max(chance, 0.7);
+    most = Math.max(most, 2);
+  }
   if (roll(map, col.q, col.r, 'rock') >= chance) return 0;
   return 1 + Math.floor(roll(map, col.q, col.r, 'rocks') * most);
 }
 
 /** Fallen branches a hex has, when none have been gathered lately. */
 function branchesOn(map, col) {
-  const chance = WOODED.has(col.terrain) ? 0.6 : col.terrain === 'meadow' ? 0.25 : 0;
-  if (roll(map, col.q, col.r, 'branch') >= chance) return 0;
-  return 1 + (roll(map, col.q, col.r, 'branches') < 0.4 ? 1 : 0);
+  if (isSpawn(map, col)) return 0;
+  const chance = WOODED.has(col.terrain) ? 0.35 : col.terrain === 'meadow' ? 0.12 : 0;
+  if (!chance || roll(map, col.q, col.r, 'branch') >= chance) return 0;
+  return 1;
+}
+
+/** A meadow randomly hosts a buzzing bee that stings once and disappears. */
+function beeOn(map, col) {
+  return !isSpawn(map, col) && col.terrain === 'meadow' && roll(map, col.q, col.r, 'bee') < 0.24;
 }
 
 /** Is there game on this hex at this moment? It moves on every so often. */
 function gameOn(map, col, time) {
+  if (isSpawn(map, col)) return false;
   if (!HARVESTS.hunt.where(col, map)) return false;
   const when = Math.floor((time || 0) / GAME_STAYS);
   return roll(map, col.q, col.r, `game:${when}`) < GAME_CHANCE;
@@ -106,7 +124,7 @@ const taken = col => col.terrain === 'path' || col.terrain === 'farm'
  *   else: fish show as rings on the water beside the bank you fish from.
  */
 export function nodesAt(map, state, col) {
-  if (!col || isWaterCol(col)) return [];
+  if (!col || isWaterCol(col) || isSpawn(map, col)) return [];
   const out = [];
   const time = state?.time || 0;
   const k = key(col.q, col.r);
@@ -136,8 +154,8 @@ export function nodesAt(map, state, col) {
   // A cut bed is still there, as stubble, so you can see it will be back.
   if (HARVESTS.cut_reeds.where(col, map)) {
     const cut = back('cut_reeds');
-    place('reeds', 'cut_reeds', !cut, 0);
-    place('reeds', 'cut_reeds', !cut, 1);
+    const v = roll(map, col.q, col.r, 'reedv') < 0.5 ? 0 : 1;
+    place('reeds', 'cut_reeds', !cut, v);
   }
 
   if (!back('gather_branch')) {
@@ -149,6 +167,9 @@ export function nodesAt(map, state, col) {
   if (isKnown(state, col.q, col.r)) {
     const has = new Set(resourcesAt(map, col));
     if (has.has('forage')) place('berries', 'forage', !back('forage'), Math.floor(roll(map, col.q, col.r, 'bush') * 3));
+    if (has.has('gather_grain')) {
+      out.push({ ...base, kind: 'grain', harvest: 'gather_grain', dx: 0, dy: 0, ready: !back('gather_grain'), variant: Math.floor(roll(map, col.q, col.r, 'grainv') * 4) });
+    }
     if (has.has('find_herb') && !back('find_herb')) place('herb', 'find_herb', true);
     if (has.has('gather_flint') && !back('gather_flint')) place('flint', 'gather_flint', true);
     if (has.has('dig_clay') && !back('dig_clay')) place('clay', 'dig_clay', true);
@@ -159,9 +180,9 @@ export function nodesAt(map, state, col) {
         out.push({ ...base, kind: 'fish', harvest: 'fish', dx: 0, dy: 0, ready: true, variant: 0, on: { q: w.q, r: w.r } });
       }
     }
+    if (!back('hunt') && gameOn(map, col, time)) place('game', 'hunt', true, Math.floor(roll(map, col.q, col.r, 'gamev') * 2));
+    if (beeOn(map, col) && !state?.taken?.[`${k}:bee`]) place('bee', null, true, Math.floor(roll(map, col.q, col.r, 'beev') * 8));
   }
-
-  if (!back('hunt') && gameOn(map, col, time)) place('game', 'hunt', true, Math.floor(roll(map, col.q, col.r, 'gamev') * 2));
 
   return out;
 }
@@ -173,7 +194,7 @@ export function hasNode(map, state, col, harvestId) {
 
 /** Harvests that take a thing off the ground, as against cutting into the land itself. */
 export const NODE_HARVESTS = new Set([
-  'gather_stone', 'gather_branch', 'cut_reeds', 'forage', 'find_herb',
+  'gather_stone', 'gather_branch', 'cut_reeds', 'forage', 'gather_grain', 'find_herb',
   'gather_flint', 'dig_clay', 'fish', 'hunt', 'fell_tree', 'harvest_field',
 ]);
 
@@ -186,22 +207,90 @@ export function takeNode(state, col, harvestId) {
 }
 
 /** How near a pointer has to be to a thing to mean it, in world pixels. */
-const REACH = { tree: 13, field: 12, fish: 11 };
+const REACH = { tree: 13, field: 12, grain: 12, fish: 11, game: 9, bee: 9 };
+
+/** Hover offset of a meadow bee relative to its node spot. */
+export function beeOffset(variant = 0, t = 0) {
+  const a = t * 2.6 + variant * 1.9;
+  return {
+    ox: Math.round(Math.sin(a) * 3.5),
+    oy: -6 + Math.round(Math.sin(a * 2) * 1.5),
+  };
+}
+
+const RABBIT_WAYPOINTS = [
+  { dx: -6, dy: 2 }, { dx: 5, dy: -2 }, { dx: 6, dy: 3 }, { dx: -4, dy: -3 },
+  { dx: 1, dy: 4 }, { dx: -7, dy: -1 }, { dx: 4, dy: 1 }, { dx: -1, dy: -3 },
+];
+
+/**
+ * Live position and pose of a rabbit wandering around its hex's top face.
+ * Deterministic from (col, variant, t) so both rendering and clicking agree.
+ */
+export function rabbitMotion(col, variant = 0, t = 0) {
+  const seed = hash2(col.q, col.r, (variant + 1) * 0x9e3779b1);
+  const start = seed % RABBIT_WAYPOINTS.length;
+  const pts = [0, 1, 2, 3].map(i => RABBIT_WAYPOINTS[(start + i * 2 + ((seed >>> (i + 3)) & 1)) % RABBIT_WAYPOINTS.length]);
+
+  const cycle = 2.6;
+  const moveDur = 1.05;
+  const phaseOffset = ((seed >>> 8) & 255) / 255 * cycle * pts.length;
+  const totalT = Math.max(0, t) + phaseOffset;
+  const legIdx = Math.floor(totalT / cycle) % pts.length;
+  const localT = totalT % cycle;
+  const from = pts[legIdx];
+  const to = pts[(legIdx + 1) % pts.length];
+
+  if (localT < moveDur) {
+    const moveP = localT / moveDur;
+    const ease = moveP * moveP * (3 - 2 * moveP);
+    const dx = from.dx + (to.dx - from.dx) * ease;
+    const dy = from.dy + (to.dy - from.dy) * ease;
+    const hop = Math.abs(Math.sin(moveP * Math.PI * 3)) * 2.2;
+    const legPhase = Math.sin(moveP * Math.PI * 6);
+    const facing = to.dx === from.dx ? (variant ? -1 : 1) : (to.dx > from.dx ? 1 : -1);
+    return {
+      dx: Math.round(dx),
+      dy: Math.round(dy),
+      hop: Math.round(hop),
+      legPhase,
+      facing,
+      moving: true,
+      earTwitch: 0,
+    };
+  }
+
+  const pauseP = (localT - moveDur) / (cycle - moveDur);
+  const prev = pts[(legIdx - 1 + pts.length) % pts.length];
+  const facing = to.dx === from.dx
+    ? (from.dx >= prev.dx ? 1 : -1)
+    : (pauseP > 0.72 ? (to.dx > pts[(legIdx + 2) % pts.length].dx ? -1 : 1) : (to.dx > from.dx ? 1 : -1));
+  const earTwitch = (pauseP > 0.45 && pauseP < 0.58) || (pauseP > 0.78 && pauseP < 0.86) ? 1 : 0;
+  return {
+    dx: Math.round(to.dx),
+    dy: Math.round(to.dy),
+    hop: 0,
+    legPhase: 0,
+    facing,
+    moving: false,
+    earTwitch,
+  };
+}
 
 /**
  * The thing under a point, given the hex the point is on.
  * `px, py` are relative to the centre of that hex's top face. Fish belong to a
  * bank but lie on the water, so the neighbours' are asked after too.
  */
-export function nodeNear(map, state, col, px, py) {
+export function nodeNear(map, state, col, px, py, t = performance.now() / 1000) {
   if (!col) return null;
   let best = null;
   const consider = (n, dx, dy) => {
     const reach = REACH[n.kind] || 7;
     const d = Math.hypot(px - dx, py - dy);
     if (d > reach) return;
-    // A tree is a big target; anything small lying in front of it wins.
-    const score = d + (n.kind === 'tree' || n.kind === 'field' ? 6 : 0);
+    // A tree, field, or tall grass stand spans the hex; anything small standing inside wins.
+    const score = d + (n.kind === 'tree' || n.kind === 'field' || n.kind === 'grain' ? 6 : 0);
     if (!best || score < best.score) best = { node: n, score };
   };
   if (isWaterCol(col)) {
@@ -212,7 +301,20 @@ export function nodeNear(map, state, col, px, py) {
       }
     }
   } else {
-    for (const n of nodesAt(map, state, col)) if (!n.on) consider(n, n.dx, n.dy - (n.kind === 'tree' ? 4 : 2));
+    for (const n of nodesAt(map, state, col)) {
+      if (n.on) continue;
+      if (n.kind === 'game') {
+        const m = rabbitMotion(col, n.variant, t);
+        consider(n, m.dx, m.dy - 2);
+      } else if (n.kind === 'bee') {
+        const { ox, oy } = beeOffset(n.variant, t);
+        consider(n, n.dx + ox, n.dy + oy);
+      } else if (n.kind === 'grain') {
+        consider(n, 0, 0);
+      } else {
+        consider(n, n.dx, n.dy - (n.kind === 'tree' ? 4 : 2));
+      }
+    }
   }
   return best?.node || null;
 }

@@ -62,7 +62,9 @@ export const isFree = state => !!state?.free;
 export function createMindState() {
   return {
     explored: {},    // "q,r" -> scenic tier (0 = common)
+    surveyed: {},    // "q,r" -> scenic tier explored personally by the player
     known: {},       // "q,r" -> 1 where the hidden resources are known
+    meditated: {},   // "q,r" -> 1 where the player has meditated at a scenic spot
     oreSigns: {},    // "q,r" -> 1 where an explored hex showed traces of ore
     roads: {},       // "q,r" -> 1 for each road tile walked
     villages: {},    // "q,r" -> 1 for each village visited
@@ -76,7 +78,7 @@ export function createState({ gold = 10, free = false } = {}) {
   const inventory = new Array(MAX_SLOTS).fill(null);
   // A few berries in your pocket, so the first minute is spent exploring rather
   // than starving.
-  inventory[0] = { id: 'berries', qty: 6 };
+  inventory[0] = { id: 'berries', qty: 5 };
   return {
     inventory,
     free,
@@ -91,6 +93,8 @@ export function createState({ gold = 10, free = false } = {}) {
     prices: {},             // "q,r" of a village -> { itemId: price }
     trust: {},              // "q,r" of a village -> true once its favour is done
     goals: {},              // journey goal id -> 1
+    seen: { berries: 1 },   // items held or seen so far; unlocks recipes in UI
+    thoughts: {},           // one-time progression hints already shown
     stats: { kills: 0, raidsRepelled: 0, campsBurned: 0, deaths: 0, crafted: 0 },
     raid: null,             // the raid schedule; see raiders.js
     won: false,

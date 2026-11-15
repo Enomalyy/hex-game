@@ -15,45 +15,47 @@ import { neighbors } from '../world/hexgrid.js';
 import { TERRAIN } from '../world/tileset.js';
 import { addXp } from './skills.js';
 import {
-  ensureMind, exploreHex, revealAround, factsOf, distanceFromCivilisation,
-  TIERS, TRADE_REVEAL_RADIUS,
+  ensureMind, exploreHex, meditateHex, revealAround, revealVistaFrom, checkOreSign,
+  isExplored, factsOf, distanceFromCivilisation, TIERS, TRADE_REVEAL_RADIUS,
 } from './discovery.js';
 
 /** Xp for arriving somewhere for the first time, and trading there. */
 export const VILLAGE_XP = 8;
-export const FIRST_TRADE_XP = 5;
+export const FIRST_TRADE_XP = 6;
 
 /**
  * The hidden achievements. `test` gets (state, facts) and is checked after
  * anything that could complete one; completion is permanent.
  */
+const surveyedOf = s => s.mind?.surveyed || s.mind?.explored || {};
+
 export const ACHIEVEMENTS = [
   // Exploring.
-  { id: 'explore_10', name: 'A Curious Eye', xp: 5, test: s => count(s.mind.explored) >= 10 },
-  { id: 'explore_40', name: 'Surveyor', xp: 12, test: s => count(s.mind.explored) >= 40 },
-  { id: 'explore_100', name: 'Cartographer', xp: 25, test: s => count(s.mind.explored) >= 100 },
-  { id: 'explore_250', name: 'Nothing Left Unturned', xp: 40, test: s => count(s.mind.explored) >= 250 },
-  { id: 'first_gold', name: 'Breathtaking', xp: 10, test: s => Object.values(s.mind.explored).includes(3) },
+  { id: 'explore_10', name: 'A Curious Eye', xp: 4, test: s => count(surveyedOf(s)) >= 10 },
+  { id: 'explore_40', name: 'Surveyor', xp: 9, test: s => count(surveyedOf(s)) >= 40 },
+  { id: 'explore_100', name: 'Cartographer', xp: 18, test: s => count(surveyedOf(s)) >= 100 },
+  { id: 'explore_250', name: 'Nothing Left Unturned', xp: 30, test: s => count(surveyedOf(s)) >= 250 },
+  { id: 'first_gold', name: 'Breathtaking', xp: 8, test: s => Object.values(surveyedOf(s)).includes(3) },
 
   // The roads.
-  { id: 'roads_15', name: 'On the Road', xp: 6, test: s => count(s.mind.roads) >= 15 },
-  { id: 'roads_40', name: 'Wayfarer', xp: 15, test: s => count(s.mind.roads) >= 40 },
-  { id: 'roads_all', name: 'Every Road', xp: 30, test: (s, f) => f.roads > 0 && count(s.mind.roads) >= Math.ceil(f.roads * 0.9) },
+  { id: 'roads_15', name: 'On the Road', xp: 5, test: s => count(s.mind.roads) >= 15 },
+  { id: 'roads_40', name: 'Wayfarer', xp: 12, test: s => count(s.mind.roads) >= 40 },
+  { id: 'roads_all', name: 'Every Road', xp: 22, test: (s, f) => f.roads > 0 && count(s.mind.roads) >= Math.ceil(f.roads * 0.9) },
 
   // People.
-  { id: 'villages_all', name: 'Well Travelled', xp: 30, test: (s, f) => f.villages > 1 && count(s.mind.villages) >= f.villages },
-  { id: 'traded_3', name: 'A Known Face', xp: 15, test: s => count(s.mind.traded) >= 3 },
+  { id: 'villages_all', name: 'Well Travelled', xp: 22, test: (s, f) => f.villages > 1 && count(s.mind.villages) >= f.villages },
+  { id: 'traded_3', name: 'A Known Face', xp: 12, test: s => count(s.mind.traded) >= 3 },
 
   // Distance from everyone.
-  { id: 'far_6', name: 'Off the Beaten Track', xp: 6, test: s => s.mind.farthest >= 6 },
-  { id: 'far_10', name: 'Into the Wild', xp: 15, test: s => s.mind.farthest >= 10 },
-  { id: 'far_15', name: 'Far From Any Hearth', xp: 30, test: s => s.mind.farthest >= 15 },
+  { id: 'far_6', name: 'Off the Beaten Track', xp: 5, test: s => s.mind.farthest >= 6 },
+  { id: 'far_10', name: 'Into the Wild', xp: 12, test: s => s.mind.farthest >= 10 },
+  { id: 'far_15', name: 'Far From Any Hearth', xp: 22, test: s => s.mind.farthest >= 15 },
 
   // Places.
-  { id: 'summit', name: 'Roof of the World', xp: 40, test: (s, f) => f.here && f.here === f.summit },
-  { id: 'treeline', name: 'Above the Treeline', xp: 15, test: (s, f) => f.here && f.here.h >= f.alpine },
-  { id: 'edge', name: "The World's Edge", xp: 10, test: (s, f) => f.here && f.atEdge },
-  { id: 'beyond', name: 'Beyond Reach', xp: 25, test: (s, f) => f.here && f.beyond },
+  { id: 'summit', name: 'Roof of the World', xp: 28, test: (s, f) => f.here && f.here === f.summit },
+  { id: 'treeline', name: 'Above the Treeline', xp: 12, test: (s, f) => f.here && f.here.h >= f.alpine },
+  { id: 'edge', name: "The World's Edge", xp: 8, test: (s, f) => f.here && f.atEdge },
+  { id: 'beyond', name: 'Beyond Reach', xp: 18, test: (s, f) => f.here && f.beyond },
 ];
 
 const count = o => Object.keys(o || {}).length;
@@ -150,7 +152,7 @@ export function onStep(world, state, at) {
   const { map } = world;
   const mind = ensureMind(state);
   const col = map.get(at.q, at.r);
-  if (!col) return settle(state, []);
+  if (!col) return { revealed: [], ...settle(state, []) };
   const moments = [];
 
   if (col.terrain === 'path') mind.roads[key(col.q, col.r)] = 1;
@@ -167,13 +169,19 @@ export function onStep(world, state, at) {
   const far = distanceFromCivilisation(map, col.q, col.r);
   if (Number.isFinite(far) && far > mind.farthest) mind.farthest = far;
 
+  let revealed = [];
+  if (isExplored(state, col.q, col.r)) {
+    checkOreSign(map, state, col);
+    revealed = revealVistaFrom(map, state, col);
+  }
+
   moments.push(...checkAchievements(map, state, col));
-  return settle(state, moments);
+  return { revealed, ...settle(state, moments) };
 }
 
 /**
  * Standing still long enough explored the hex. A scenic find is a moment of its
- * own; an ordinary hex is not, though it still counts towards the milestones.
+ * own; sitting down there to meditate awards Mind xp (see onMeditated).
  */
 export function onExplored(world, state, at) {
   const { map } = world;
@@ -182,10 +190,21 @@ export function onExplored(world, state, at) {
 
   const moments = [];
   if (found.tier > 0) {
-    moments.push(moment('scenic', found.name, found.xp, { tier: found.tier, tierName: TIERS[found.tier].name }));
+    moments.push(moment('scenic', found.name, 0, { tier: found.tier, tierName: TIERS[found.tier].name }));
   }
   moments.push(...checkAchievements(map, state, map.get(at.q, at.r)));
   return { found, ...settle(state, moments) };
+}
+
+/**
+ * Finished meditating while seated on an explored scenic hex.
+ */
+export function onMeditated(world, state, at) {
+  const { map } = world;
+  const med = meditateHex(map, state, at.q, at.r);
+  if (!med) return { meditated: null, ...settle(state, []) };
+  const moments = [moment('meditate', med.name, med.xp, { tier: med.tier })];
+  return { meditated: med, ...settle(state, moments) };
 }
 
 /**

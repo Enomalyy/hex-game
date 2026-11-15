@@ -3,7 +3,7 @@
 // you can make right now; the rest are the five skills.
 
 import { ITEMS, SKILLS, isBuilding, RECIPES } from '../../game/state.js';
-import { checkRecipe, recipesBySkill } from '../../game/crafting.js';
+import { checkRecipe, recipesBySkill, recipeKnown } from '../../game/crafting.js';
 import { skillIcon, levelOf } from '../../game/skills.js';
 import { countItem } from '../../game/inventory.js';
 import { icon, escapeHtml } from '../ui.js';
@@ -59,10 +59,14 @@ export const craftingPanel = {
 
     let list;
     if (tab === 'ready') {
-      list = Object.values(RECIPES).map(r => ({ r, check: checkRecipe(game.state, r.id, ctx) }))
+      list = Object.values(RECIPES)
+        .filter(r => recipeKnown(game.state, r))
+        .map(r => ({ r, check: checkRecipe(game.state, r.id, ctx) }))
         .filter(x => x.check.ok);
     } else {
-      list = (groups[tab] || []).map(r => ({ r, check: checkRecipe(game.state, r.id, ctx) }));
+      list = (groups[tab] || [])
+        .filter(r => recipeKnown(game.state, r))
+        .map(r => ({ r, check: checkRecipe(game.state, r.id, ctx) }));
     }
     const rows = sortRows(list).map(({ r, check }) => recipeRow(game, r, check)).join('');
 
@@ -73,7 +77,7 @@ export const craftingPanel = {
 
     const empty = tab === 'ready'
       ? '<p class="dim">Nothing you can make right now. Look under a skill to see what each recipe is waiting on.</p>'
-      : '';
+      : '<p class="dim">Gather from the land to discover what can be made.</p>';
     return `<div class="tabs">${tabs}</div>${where}<div class="recipes">${rows || empty}</div>`;
   },
 

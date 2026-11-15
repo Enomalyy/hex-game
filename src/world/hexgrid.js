@@ -202,8 +202,11 @@ export function pickHex(px, py, topHeight, searchRadius = 3, peak = 0) {
   candidates.sort((a, b) => (b.base - a.base) || (b.h - a.h));
 
   for (const c of candidates) {
-    const { cx, cy } = tileCenter(c.q, c.r, Math.max(0, c.h));
-    if (pointInHex(px, py, cx, cy)) return { q: c.q, r: c.r, h: c.h };
+    if (c.h < 0) continue;
+    const { cx, cy: topCy } = tileCenter(c.q, c.r, c.h);
+    const { cy: botCy } = tileCenter(c.q, c.r, 0);
+    const testCy = Math.max(topCy, Math.min(py, botCy));
+    if (pointInHex(px, py, cx, testCy)) return { q: c.q, r: c.r, h: c.h };
   }
   return null;
 }

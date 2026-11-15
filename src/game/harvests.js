@@ -44,25 +44,37 @@ const waterside = (col, map) => beside(o => water(o) && col.h - o.h <= 1)(col, m
  */
 export const HARVESTS = {
   forage: {
-    id: 'forage', name: 'Forage', skill: 'homesteading', level: 1, xp: 1, energy: 0, regrows: 75,
+    id: 'forage', name: 'Forage', skill: 'homesteading', level: 1, xp: 1, energy: 0, regrows: 140,
     where: on(...OPEN, ...FOREST, ...WOODED),
-    yields: { berries: [2, 4] },
-    // Wild grain grows in the open, which is how a first field gets its seed.
-    bonusWhere: { grain: col => ['meadow', 'grass'].includes(col.terrain) },
-    bonusYields: { grain: [0, 2] },
+    yields: { berries: [2, 3] },
     bonus: { dog: { berries: [1, 1] } },
     verb: 'Foraging',
+  },
+  gather_grain: {
+    id: 'gather_grain', name: 'Gather Tall Grass', skill: 'homesteading', level: 1, xp: 1, energy: 0.5, regrows: 150,
+    where: on('meadow', 'grass'),
+    yields: { grain: [1, 2] },
+    bonusYields: { herb: [1, 1], herb_seed: [1, 1] },
+    bonusWhere: {
+      herb: (_col, rng) => !!rng && rng.next() < 0.20,
+      herb_seed: (_col, rng) => !!rng && rng.next() < 0.14,
+    },
+    verb: 'Gathering',
   },
   find_herb: {
     id: 'find_herb', name: 'Pick Herbs', skill: 'mind', level: 1, xp: 0, energy: 0.5, regrows: 90,
     where: on(...OPEN, ...FOREST, ...WOODED),
     yields: { herb: [1, 2] },
+    bonusYields: { herb_seed: [1, 1] },
+    bonusWhere: {
+      herb_seed: (_col, rng) => !!rng && rng.next() < 0.28,
+    },
     verb: 'Searching',
   },
   gather_branch: {
-    id: 'gather_branch', name: 'Gather Branches', skill: 'woodworking', level: 1, xp: 1, energy: 0.5, regrows: 300,
+    id: 'gather_branch', name: 'Gather Branches', skill: 'woodworking', level: 1, xp: 1, energy: 0.5, regrows: 360,
     where: on(...WOODED, ...FOREST, 'meadow'),
-    yields: { branch: [2, 3] },
+    yields: { branch: [1, 2] },
     verb: 'Gathering',
   },
   fell_tree: {
@@ -75,13 +87,13 @@ export const HARVESTS = {
     verb: 'Chopping',
   },
   cut_reeds: {
-    id: 'cut_reeds', name: 'Cut Reeds', skill: 'woodworking', level: 1, xp: 1, energy: 0.5, regrows: 180,
+    id: 'cut_reeds', name: 'Cut Reeds', skill: 'woodworking', level: 1, xp: 1, energy: 0.5, regrows: 220,
     where: waterside,
-    yields: { reed: [2, 3] },
+    yields: { reed: [2, 2] },
     verb: 'Cutting',
   },
   dig_clay: {
-    id: 'dig_clay', name: 'Dig Clay', skill: 'homesteading', level: 1, xp: 2, energy: 0.5, regrows: 150,
+    id: 'dig_clay', name: 'Dig Clay', skill: 'homesteading', level: 1, xp: 2, energy: 0.5, regrows: 210,
     where: waterside,
     yields: { clay: [1, 2] },
     verb: 'Digging',
@@ -96,7 +108,7 @@ export const HARVESTS = {
     verb: 'Gathering',
   },
   gather_flint: {
-    id: 'gather_flint', name: 'Pick Flint', skill: 'stoneworking', level: 1, xp: 2, energy: 0.5, regrows: 240,
+    id: 'gather_flint', name: 'Pick Flint', skill: 'stoneworking', level: 1, xp: 2, energy: 0.5, regrows: 300,
     where: on(...ROCKY),
     yields: { flint: [1, 2] },
     verb: 'Searching',
@@ -127,11 +139,10 @@ export const HARVESTS = {
   mine_cliff: {
     id: 'mine_cliff', name: 'Mine the Face', skill: 'stoneworking', level: 1, xp: 3, energy: 1.5,
     tool: ['pickaxe', 'stone_hammer'],
-    // A face you cannot climb is a face you can cut down.
+    // Quarry stone and flint from an exposed cliff wall without bringing the hex down.
     where: (col, map) => beside(o => o.h - col.h >= 2)(col, map),
     yields: { stone: [2, 3], flint: [0, 1] },
     bonus: { pickaxe: { stone: [2, 2] } },
-    lowersCliff: true,
     verb: 'Mining',
   },
   mine_ore: {
@@ -174,7 +185,7 @@ export function cliffTarget(map, col) {
  * you move on.
  */
 const REGROW_TEXT = {
-  forage: 'Picked clean', find_herb: 'Picked clean', hunt: 'The game has fled', fish: 'The fish have gone quiet',
+  forage: 'Picked clean', gather_grain: 'Stripped of seed', find_herb: 'Picked clean', hunt: 'The game has fled', fish: 'The fish have gone quiet',
   gather_branch: 'Nothing left lying here', cut_reeds: 'Cut to the stubble', dig_clay: 'Dug out', gather_flint: 'Picked over',
 };
 const pickKey = (col, id) => `${col.q},${col.r}:${id}`;

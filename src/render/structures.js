@@ -352,41 +352,56 @@ const DRAW = {
   },
 
   watchtower(ctx, x, y, t = 0) {
-    shadow(ctx, x, y + 1, 8, 3);
-    // Stone pier footings
-    for (const dx of [-5, 3]) {
-      box(ctx, x + dx, y - 2, 3, 3, PAL.stone.mid, PAL.stone.lit, PAL.stone.shade);
-    }
-    // Tapered timber trestle legs
-    linePx(ctx, INK, x - 5, y - 2, x - 4, y - 14);
-    linePx(ctx, INK, x - 4, y - 2, x - 3, y - 14);
-    linePx(ctx, PAL.timber.lit, x - 4, y - 3, x - 3, y - 14);
-    linePx(ctx, INK, x + 5, y - 2, x + 4, y - 14);
-    linePx(ctx, INK, x + 4, y - 2, x + 3, y - 14);
-    linePx(ctx, PAL.timber.mid, x + 4, y - 3, x + 3, y - 14);
-    // X-bracing & cross-beams
-    linePx(ctx, PAL.timber.shade, x - 3, y - 4, x + 3, y - 12);
-    linePx(ctx, PAL.timber.shade, x + 3, y - 4, x - 3, y - 12);
-    px(ctx, INK, x - 4, y - 9, 8, 1);
-    // Mini access ladder up left side
-    for (let ly = y - 13; ly <= y - 2; ly += 2) px(ctx, '#e2c26b', x - 2, ly, 2, 1);
+    shadow(ctx, x, y + 1, 7, 3);
+    // Rear timber posts for depth
+    px(ctx, PAL.timber.dark, x - 3, y - 14, 1, 13);
+    px(ctx, PAL.timber.dark, x + 2, y - 14, 1, 13);
 
-    // Cantilevered lookout gallery & crenellated timber parapet
-    box(ctx, x - 7, y - 20, 14, 6, PAL.timber.mid, PAL.timber.lit, PAL.timber.shade);
-    px(ctx, INK, x - 7, y - 21, 14, 1);
-    // Arrow slits / lookout openings
-    px(ctx, INK, x - 4, y - 19, 2, 2);
-    px(ctx, INK, x + 2, y - 19, 2, 2);
-    // Hanging glowing beacon lantern
-    const glow = 0.75 + 0.25 * Math.sin(t * 4.5);
-    px(ctx, INK, x + 6, y - 19, 2, 1);
-    px(ctx, INK, x + 6, y - 18, 3, 3);
-    px(ctx, glow > 0.8 ? '#ffe27a' : '#f59e38', x + 7, y - 17, 1, 1);
+    // Diagonal log X-bracing between the legs
+    linePx(ctx, PAL.timber.dark, x - 4, y - 2, x + 4, y - 13);
+    linePx(ctx, PAL.timber.shade, x + 4, y - 2, x - 4, y - 13);
 
-    // Crimson shingled roof & spire
-    pixelRoof(ctx, x, y - 29, 8, 8, PAL.shingle, true);
-    px(ctx, INK, x, y - 32, 1, 3);
-    px(ctx, '#ffcd75', x, y - 32, 1, 1);
+    // Horizontal log cross-beams
+    px(ctx, INK, x - 5, y - 6, 10, 2);
+    px(ctx, PAL.timber.shade, x - 4, y - 5, 8, 1);
+    px(ctx, INK, x - 5, y - 11, 10, 2);
+    px(ctx, PAL.timber.mid, x - 4, y - 10, 8, 1);
+
+    // Front sturdy log posts
+    px(ctx, INK, x - 6, y - 15, 3, 16);
+    px(ctx, PAL.timber.mid, x - 5, y - 14, 2, 14);
+    px(ctx, PAL.timber.lit, x - 5, y - 14, 1, 14);
+    px(ctx, INK, x + 3, y - 15, 3, 16);
+    px(ctx, PAL.timber.shade, x + 4, y - 14, 2, 14);
+    px(ctx, PAL.timber.mid, x + 4, y - 14, 1, 14);
+
+    // Simple wooden access ladder
+    px(ctx, PAL.timber.dark, x - 2, y - 14, 1, 14);
+    px(ctx, PAL.timber.dark, x + 1, y - 14, 1, 14);
+    for (let ly = y - 13; ly <= y - 2; ly += 2) px(ctx, PAL.timber.lit, x - 1, ly, 2, 1);
+
+    // Lookout plank deck
+    box(ctx, x - 7, y - 16, 14, 3, PAL.timber.mid, PAL.timber.lit, PAL.timber.shade);
+    px(ctx, PAL.timber.dark, x - 7, y - 15, 14, 1);
+
+    // Corner roof posts & log guard rail
+    px(ctx, INK, x - 6, y - 23, 2, 7);
+    px(ctx, PAL.timber.lit, x - 5, y - 22, 1, 6);
+    px(ctx, INK, x + 4, y - 23, 2, 7);
+    px(ctx, PAL.timber.shade, x + 5, y - 22, 1, 6);
+    px(ctx, INK, x - 7, y - 20, 14, 2);
+    px(ctx, PAL.timber.lit, x - 6, y - 19, 12, 1);
+    px(ctx, PAL.timber.mid, x - 2, y - 19, 1, 3);
+    px(ctx, PAL.timber.mid, x + 1, y - 19, 1, 3);
+
+    // Simple low-pitched timber shelter roof
+    pixelRoof(ctx, x, y - 27, 8, 5, {
+      lit: PAL.timber.lit,
+      mid: PAL.timber.mid,
+      shade: PAL.timber.shade,
+      ridge: PAL.thatch.mid,
+    }, true);
+    px(ctx, PAL.timber.dark, x - 1, y - 28, 2, 1);
   },
 
   forge(ctx, x, y, t = 0) {
@@ -569,39 +584,20 @@ export function drawLadderTop(ctx, top, edge) {
 // ---------------------------------------------------------------- crossings
 
 /**
- * A raiders' crossing: a lashed timber raft moored on the river under a tattered
- * crimson pennant, readable from across the map.
+ * A raiders' crossing: shallow stepping-stone shoals with faint ripples where a
+ * war band can ford the river cleanly without visual clutter.
  */
 export function drawCrossing(ctx, x, y, q = 0, r = 0, t = 0) {
-  const bob = Math.sin(t * 1.6 + q * 1.3 + r * 0.7) > 0.2 ? 0 : 1;
-  y += bob;
-
-  // Water ripple & hull shadow
-  const rip = Math.floor(t * 2.5 + q) % 2;
-  ctx.fillStyle = 'rgba(18, 22, 54, 0.28)';
-  ctx.fillRect(x - 9, y + 3, 18, 2);
-  px(ctx, 'rgba(225, 240, 255, 0.45)', x - 10 - rip, y + 3, 2, 1);
-  px(ctx, 'rgba(225, 240, 255, 0.45)', x + 8 + rip, y + 2, 2, 1);
-
-  // Five lashed river logs
-  px(ctx, INK, x - 9, y - 4, 18, 8);
-  for (let i = 0; i < 3; i++) {
-    const ly = y - 3 + i * 2;
-    px(ctx, i === 1 ? PAL.timber.mid : PAL.timber.lit, x - 8, ly, 16, 1);
-    px(ctx, PAL.timber.shade, x - 8, ly + 1, 16, 1);
+  const rip = Math.floor(t * 1.8 + q + r) % 2;
+  const stones = (q + r) & 1
+    ? [[-6, 1, 3], [-1, -1, 4], [4, 1, 3]]
+    : [[-5, -1, 3], [0, 1, 4], [5, -1, 3]];
+  for (const [dx, dy, w] of stones) {
+    px(ctx, 'rgba(225, 240, 255, 0.36)', x + dx - 1 - rip, y + dy + 1, w + 2, 1);
+    px(ctx, '#474b5e', x + dx, y + dy, w, 2);
+    px(ctx, '#606479', x + dx, y + dy - 1, w, 1);
+    px(ctx, '#8885a6', x + dx + 1, y + dy - 1, Math.max(1, w - 2), 1);
   }
-  // Cross spars & hemp bindings
-  px(ctx, PAL.timber.dark, x - 5, y - 3, 2, 6);
-  px(ctx, PAL.timber.dark, x + 3, y - 3, 2, 6);
-  px(ctx, '#e2c26b', x - 5, y - 2, 1, 4);
-  px(ctx, '#e2c26b', x + 4, y - 2, 1, 4);
-
-  // Steering sweep oar trailing off the stern
-  linePx(ctx, INK, x - 6, y, x - 11, y + 3);
-  linePx(ctx, PAL.timber.lit, x - 6, y - 1, x - 10, y + 2);
-
-  // War pennant pole
-  banner(ctx, x, y - 2, 13, '#b13e53', '#d46373', t + q * 0.4, false);
 }
 
 // ------------------------------------------------------------------ bridges

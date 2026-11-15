@@ -32,6 +32,7 @@ const PHRASES = {
   gold: [[0], [2], [4], [7, 5]],
   achievement: [[1], [4, 6]],
   village: [[0], [3]],
+  meditate: [[0, 4], [2, 6], [4, 7]],
   // Low and falling: something is wrong.
   raid: [[3], [1], [0]],
 };
@@ -67,5 +68,65 @@ export function chime(kind, volume = 0.08) {
     phrase.forEach((notes, i) => {
       for (const n of notes) bell(ctx, SCALE[n], t0 + i * 0.11, volume / notes.length);
     });
+  } catch { /* sound is a nicety; never let it break the game */ }
+}
+
+let hum = null;
+
+/**
+ * Sustain or fade out a soft warm harmonic drone while the player meditates.
+ * Safe when WebAudio is blocked or unavailable.
+ */
+export function updateMeditationHum(active, progress = 0) {
+  try {
+    if (!active) {
+      if (!hum) return;
+      const { ctx, master, oscs } = hum;
+      hum = null;
+      const now = ctx.currentTime;
+      master.gain.cancelScheduledValues(now);
+      master.gain.setTargetAtTime(0.0001, now, 0.08);
+      for (const o of oscs) o.stop(now + 0.35);
+      return;
+    }
+    const ctx = audio();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+    const p = Math.max(0, Math.min(1, progress));
+
+    if (!hum) {
+      const master = ctx.createGain();
+      master.gain.setValueAtTime(0.0001, now);
+      master.connect(ctx.destination);
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(560, now);
+      filter.connect(master);
+
+      const voices = [
+        { type: 'sine', freq: 220, amp: 0.55 },
+        { type: 'triangle', freq: 329.63, amp: 0.25 },
+        { type: 'sine', freq: 440, amp: 0.12 },
+      ];
+      const oscs = [];
+      for (const v of voices) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = v.type;
+        o.frequency.setValueAtTime(v.freq, now);
+        g.gain.setValueAtTime(v.amp, now);
+        o.connect(g).connect(filter);
+        o.start(now);
+        oscs.push(o);
+      }
+      hum = { ctx, master, filter, oscs };
+    }
+
+    const breath = 0.85 + 0.15 * Math.sin(now * 2.4);
+    const targetGain = (0.006 + p * 0.03) * breath;
+    hum.master.gain.setTargetAtTime(targetGain, now, 0.12);
+    hum.filter.frequency.setTargetAtTime(480 + p * 420, now, 0.15);
   } catch { /* sound is a nicety; never let it break the game */ }
 }

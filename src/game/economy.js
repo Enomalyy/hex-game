@@ -19,7 +19,7 @@ export const villageKey = (q, r) => `${q},${r}`;
 export const kindOf = feature => VILLAGE_KINDS[feature?.kind] || VILLAGE_KINDS.farmers;
 
 /** Gold a village pays for its favour. */
-export const FAVOUR_REWARD = 12;
+export const FAVOUR_REWARD = 20;
 
 /**
  * Fill in a village's prices and favour the first time it is visited. Prices are
@@ -38,11 +38,12 @@ export function ensureVillage(state, village, q, r, worldSeed = '') {
   if (!state.prices[key]) {
     const rng = new Rng(`${worldSeed}:village:${key}`);
     const kind = kindOf(village);
-    const extras = rng.shuffle(['berries', 'branch', 'stone', 'reed', 'hide', 'cord', 'meat', 'grain', 'herb', 'clay', 'flint'])
+    const extras = rng.shuffle(['berries', 'branch', 'stone', 'reed', 'hide', 'cord', 'meat', 'grain', 'herb', 'clay'])
       .filter(id => !kind.sells.includes(id)).slice(0, 3);
     const prices = {};
     for (const id of kind.sells) prices[id] = Math.max(1, Math.round(ITEM_BASE_PRICES[id] * rng.range(0.7, 0.95)));
     for (const id of extras) prices[id] = Math.max(1, Math.round(ITEM_BASE_PRICES[id] * rng.range(1.0, 1.3)));
+    if (!prices.stone_knife) prices.stone_knife = Math.max(1, Math.round(ITEM_BASE_PRICES.stone_knife * rng.range(0.95, 1.15)));
     state.prices[key] = prices;
   }
   return state.prices[key];

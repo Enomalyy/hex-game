@@ -58,15 +58,21 @@ export function harvest(world, state, at, id, rng) {
       if (g) g.qty += got; else gained.push({ id: item, qty: got });
     }
   };
-  for (const [item, range] of Object.entries(spec.yields)) give(item, roll(rng, range));
-  for (const [item, range] of Object.entries(spec.bonusYields || {})) {
-    if (spec.bonusWhere?.[item]?.(col)) give(item, roll(rng, range));
+  if (spec.id === 'harvest_field' && col.feature?.kind === 'herb') {
+    const qty = roll(rng, [3, 4]) + (levelOf(state, 'homesteading') >= 4 ? 1 : 0);
+    give('herb', qty);
+    if (rng.next() < 0.35) give('herb_seed', 1);
+  } else {
+    for (const [item, range] of Object.entries(spec.yields)) give(item, roll(rng, range));
+    for (const [item, range] of Object.entries(spec.bonusYields || {})) {
+      if (spec.bonusWhere?.[item]?.(col, rng)) give(item, roll(rng, range));
+    }
+    for (const [tool, extra] of Object.entries(spec.bonus || {})) {
+      if (countItem(state, tool) === 0) continue;
+      for (const [item, range] of Object.entries(extra)) give(item, roll(rng, range));
+    }
+    if (spec.id === 'harvest_field' && levelOf(state, 'homesteading') >= 4) give('grain', 2);
   }
-  for (const [tool, extra] of Object.entries(spec.bonus || {})) {
-    if (countItem(state, tool) === 0) continue;
-    for (const [item, range] of Object.entries(extra)) give(item, roll(rng, range));
-  }
-  if (spec.id === 'harvest_field' && levelOf(state, 'homesteading') >= 4) give('grain', 2);
 
   if (!gained.length) return { ok: false, message: 'Your pack is full.' };
   spend(state, spec.energy);
@@ -99,16 +105,12 @@ export function harvest(world, state, at, id, rng) {
     changed.push(col);
   }
 
-  if (spec.lowersCliff) {
+  if (spec.id === 'mine_cliff') {
     const face = cliffTarget(map, col);
-    if (face) {
-      face.h = Math.max(0, face.h - (countItem(state, 'pickaxe') ? 2 : 1));
-      if (face.feature?.type === 'ore' && face.feature.known && face.feature.remaining > 0) {
-        face.feature.remaining--;
-        give('ore', 1);
-        if (face.feature.remaining <= 0) delete face.feature;
-      }
-      changed.push(face);
+    if (face?.feature?.type === 'ore' && face.feature.known && face.feature.remaining > 0) {
+      face.feature.remaining--;
+      give('ore', 1);
+      if (face.feature.remaining <= 0) delete face.feature;
     }
   }
 
@@ -220,7 +222,7 @@ export function placementSpots(world, state, at, recipeId) {
   if (!here) return [];
 
   if (isLadder(recipeId)) {
-    if (here.feature) return [];
+    if (isWater(here.terrain) || here.feature?.wall) return [];
     return neighbors(at.q, at.r)
       .map(c => map.get(c.q, c.r))
       .filter(col => col && TERRAIN[col.terrain]?.walk
@@ -242,7 +244,7 @@ export function placementSpots(world, state, at, recipeId) {
     .map(c => map.get(c.q, c.r))
     .filter(col => col && TERRAIN[col.terrain]?.walk && col.terrain !== 'path'
       && !col.feature && Math.abs(col.h - here.h) <= 1
-      && !(recipeId === 'field' && !['grass', 'meadow', 'steppes', 'forest_floor', 'pine_floor'].includes(col.terrain)));
+      && !(outputOf(recipeId) === 'field' && !['grass', 'meadow', 'steppes', 'forest_floor', 'pine_floor'].includes(col.terrain)));
 }
 
 /** The extra a bridge costs for its length. */
@@ -276,7 +278,9 @@ export function build(world, state, at, recipeId, target, ctx = {}) {
   if (item === 'ladder') {
     const foot = map.get(at.q, at.r);
     map.addStructure({ type: 'ladder', from: { q: at.q, r: at.r }, to: { q: col.q, r: col.r } });
-    foot.feature = { type: 'structure', item, name: itemName(item), to: { q: col.q, r: col.r } };
+    if (!foot.feature) {
+      foot.feature = { type: 'structure', item, name: itemName(item), to: { q: col.q, r: col.r } };
+    }
     recordBuilt(state, item, foot.q, foot.r);
     return { ok: true, message: `You lean a ladder against the ${col.h - foot.h}-level face.`, column: foot, levels: result.levelsGained };
   }
@@ -290,11 +294,13 @@ export function build(world, state, at, recipeId, target, ctx = {}) {
 
   if (item === 'field') {
     // A field is terrain, not furniture: the farm sheets draw it directly.
+    const isHerb = recipeId === 'herb_field';
     const crops = Object.keys(CROPS);
-    const crop = crops[Math.abs(col.q * 7 + col.r * 13) % crops.length];
-    map.place(col.q, col.r, 'farm', col.h, { sprite: CROPS[crop].sheet, frame: cropFrame(0, 0) });
+    const crop = isHerb ? 'cabbage' : crops[Math.abs(col.q * 7 + col.r * 13) % crops.length];
+    const variant = isHerb ? 1 : 0;
+    map.place(col.q, col.r, 'farm', col.h, { sprite: CROPS[crop].sheet, frame: cropFrame(0, variant) });
     map.get(col.q, col.r).feature = {
-      type: 'field', crop, variant: 0, ripe: false, plantedAt: state.time,
+      type: 'field', kind: isHerb ? 'herb' : 'grain', crop, variant, ripe: false, plantedAt: state.time,
       hp: STRUCTURE_HP.field, maxHp: STRUCTURE_HP.field,
     };
   } else {
@@ -380,6 +386,43 @@ export function penaltyOnDeath(state) {
   const gold = Math.floor((state.gold || 0) / 2);
   state.gold -= gold;
   return { lost, gold };
+}
+
+/**
+ * Strike flint against a dry branch to relight the cold campfire at the spawn
+ * into a working hearth.
+ */
+export function relightCampfire(world, state, at) {
+  const { map } = world;
+  const spawn = map.spawn && map.get(map.spawn.q, map.spawn.r);
+  if (!spawn) return { ok: false, message: 'No campfire here.' };
+  if (spawn.feature) return { ok: false, message: 'The fire is already lit.' };
+  if (distance(at.q, at.r, spawn.q, spawn.r) > 1) {
+    return { ok: false, message: 'Stand by the campfire to relight it.' };
+  }
+  if (!isFree(state)) {
+    const hasBranch = countItem(state, 'branch') >= 1;
+    const hasFlint = countItem(state, 'flint') >= 1;
+    if (!hasBranch && !hasFlint) {
+      return { ok: false, message: 'Needs a branch and a piece of flint to relight the campfire.' };
+    }
+    if (!hasBranch) return { ok: false, message: 'Needs a dry branch to catch the spark.' };
+    if (!hasFlint) return { ok: false, message: 'Needs a piece of flint to strike a spark.' };
+    removeItem(state, 'branch', 1);
+    removeItem(state, 'flint', 1);
+  }
+  const hp = STRUCTURE_HP.hearth || 8;
+  spawn.feature = { type: 'structure', item: 'hearth', name: itemName('hearth'), camp: true, hp, maxHp: hp };
+  recordBuilt(state, 'hearth', spawn.q, spawn.r);
+  const levels = addXp(state, 'homesteading', 6);
+  state.stats ||= {};
+  state.stats.crafted = (state.stats.crafted || 0) + 1;
+  return {
+    ok: true,
+    message: 'Sparks catch in the dry kindling — the campfire blazes back to life!',
+    column: spawn,
+    levels,
+  };
 }
 
 export { hasRoomFor };

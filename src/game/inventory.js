@@ -57,7 +57,14 @@ export function addItem(state, id, qty = 1) {
     left -= add;
   }
 
-  return qty - left;
+  const added = qty - left;
+  if (added > 0) (state.seen ||= {})[id] = 1;
+  return added;
+}
+
+/** Whether the player has held or built this item yet (used to reveal recipes). */
+export function hasSeenItem(state, id) {
+  return !!(state?.seen?.[id] || countItem(state, id) > 0 || hasBuilt(state, id));
 }
 
 /** Remove `qty`. Returns false and changes nothing if there are not enough. */
@@ -182,7 +189,7 @@ function eatAnything(state) {
 }
 
 /** Steps per point of energy spent walking. */
-export const STEPS_PER_ENERGY = 8;
+export const STEPS_PER_ENERGY = 4;
 
 /**
  * A step's worth of hunger.
